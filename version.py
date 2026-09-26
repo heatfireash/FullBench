@@ -1,0 +1,428 @@
+"""
+Version and changelog.
+
+Bump VERSION and add an entry at the top of CHANGELOG for every change
+worth telling a user about. The About tab reads both from here, so there
+is one place to edit.
+"""
+
+VERSION = "1.30.0"
+
+# Where the "support Full Bench" links point. Ko-fi charges no fee on
+# donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
+DONATE_URL = "https://ko-fi.com/fullbench"
+DONATE_LABEL = "Support Full Bench on Ko-fi"
+
+CHANGELOG = [
+    ("1.30.0", "2026-09-25", [
+        "Website footer now links to @fullbenchgg on X, alongside the "
+        "support link and the download.",
+    ]),
+    ("1.29.0", "2026-09-25", [
+        "Signing in is one button. The server address is built in, and "
+        "the email and password fields are gone -- authentication "
+        "happens in your browser, where you can see the address bar and "
+        "the certificate. The app never handles a password, and the code "
+        "that could accept one has been removed.",
+    ]),
+    ("1.28.0", "2026-09-25", [
+        "The website works on a phone. The navigation wrapped off the "
+        "screen, wide tables stretched the page sideways, and the header "
+        "did not reach the edge. Tables now scroll inside their own "
+        "panel, the navigation wraps to its own line, and the stat "
+        "strips become a two-column grid on narrow screens.",
+    ]),
+    ("1.27.0", "2026-09-25", [
+        "Downloads are rate limited to 6 an hour per address, so a "
+        "flood cannot run up a bandwidth bill.",
+        "Caddy is now built with the rate-limiting module it needs; the "
+        "stock image would have refused to start on the config.",
+        "make_logo.py also produces a 1500x500 header and a square "
+        "avatar for social accounts.",
+    ]),
+    ("1.26.0", "2026-09-25", [
+        "Global stats shows how many distinct cards have been seen "
+        "instead of the minimum sample size -- a number that says how "
+        "much is actually known, rather than restating a setting.",
+        "New Decks page listing every deck tracked, not just the top "
+        "ten, sortable by name, win rate, games or share, with how many "
+        "cards each has been seen playing. Click through for a deck's "
+        "cards and matchups as before.",
+    ]),
+    ("1.25.0", "2026-09-25", [
+        "The second Pokemon in a deck's name can now be its ability "
+        "engine, not only a second attacker. A Metang firing Metal Maker "
+        "four times a game is more a part of the deck than a Pokemon "
+        "that landed one 60-damage attack, so ability uses and damage "
+        "are weighed on the same footing and the larger wins. Your deck "
+        "is now 'Mega Excadrill ex / Metang'.",
+    ]),
+    ("1.24.0", "2026-09-25", [
+        "Decks are now grouped and named by what attacks. A Slowking deck "
+        "is Slowking, not the Mega Kangaskhan that sits in it and never "
+        "attacks -- and Kangaskhan decks that actually attack with it are "
+        "kept separate.",
+        "Engine Pokemon are found from the data: anything seen alongside "
+        "several different main attackers is treated as an engine and "
+        "stops counting as evidence of which deck it is.",
+        "A one-off game where a side attacker took the KOs no longer "
+        "founds a new archetype or drags other games into one.",
+    ]),
+    ("1.23.0", "2026-09-25", [
+        "Deck names are now worked out the same way in the app as on the "
+        "website: matches are grouped by the Pokemon seen and each group "
+        "is named after the one doing the attacking. Yours and your "
+        "opponents' both. Nothing to type, nothing to maintain, and one "
+        "deck stays under one name however each game happened to go.",
+        "Pasting a decklist is optional and only adds versioning.",
+    ]),
+    ("1.22.1", "2026-09-25", [
+        "Your dashboard on the website shows what each of your decks "
+        "plays as in global stats, next to whatever you called it. Your "
+        "own names stay yours; the global page only ever shows the "
+        "archetype worked out from the cards.",
+        "Fixed the last-10 feed on the global page, which could show a "
+        "player's personal deck name instead of the archetype.",
+    ]),
+    ("1.22.0", "2026-09-25", [
+        "A decklist copied in PTCGL is imported on its own. The app "
+        "already watches the clipboard for battle logs; now a list copied "
+        "with the game's own Copy button is filed under the deck it "
+        "matches, with nothing to paste. Copy a list once and that deck "
+        "is named from it from then on.",
+    ]),
+    ("1.21.0", "2026-09-25", [
+        "Deck names that mean the same deck are now merged. One deck was "
+        "ending up as 'Mega Excadrill ex', 'Mega Excadrill ex / Metang' "
+        "and 'Metagross / Metang' depending on which Pokemon turned up "
+        "that game. After every match the app compares the cards behind "
+        "each name and folds together any that overlap by half or more, "
+        "keeping the best-evidenced name -- or your saved decklist's "
+        "name, if one matches.",
+        "py ptcgl_stats.py --merge-decks runs it by hand, with an "
+        "optional overlap threshold.",
+    ]),
+    ("1.20.0", "2026-09-25", [
+        "If you have pasted a decklist, matches are named from it "
+        "directly instead of being guessed: whichever of your saved "
+        "lists contains most of the cards seen is the deck you played, "
+        "and the match is filed under that list's version. This is exact "
+        "for your own decks and does not care which Pokemon happened to "
+        "come out that game.",
+        "Added find_decks.py, which checks whether PTCGL keeps your "
+        "decks on disk -- if it does, the selected deck could be read "
+        "directly and pasting would not be needed.",
+    ]),
+    ("1.19.0", "2026-09-25", [
+        "Deck names on the website are now worked out from the data "
+        "rather than a list somebody has to maintain. Matches are "
+        "grouped by the Pokemon seen in play and each group is named "
+        "after the one doing the attacking, so new decks name themselves "
+        "when a set drops.",
+        "It will sometimes merge or split a deck wrongly. That is the "
+        "trade for never having to update a definition file, and it "
+        "improves as more games are recorded.",
+        "archetypes.json is now empty and optional -- only for forcing a "
+        "name the automatic one gets wrong.",
+    ]),
+    ("1.18.0", "2026-09-25", [
+        "Sprites now work for owned Pokemon: \"Team Rocket's Spidops\" and "
+        "\"N's Zoroark\" show Spidops and Zoroark. Farfetch'd and "
+        "Sirfetch'd are left alone.",
+        "Deck definitions gained 'requires_any': a deck is recognised by "
+        "any one of several signature cards, not only its headline "
+        "Pokemon. A Team Rocket's deck in a game where Mewtwo never hit "
+        "the board is still named correctly.",
+    ]),
+    ("1.17.1", "2026-09-25", [
+        "Described as a stat tracker rather than a match tracker.",
+    ]),
+    ("1.17.0", "2026-09-25", [
+        "New logo: FULL in gold above a bench of five cards spelling "
+        "BENCH, a letter to a card.",
+        "Icons step down in two stages, because a five-letter wordmark "
+        "cannot survive a taskbar: blank cards at 40-48px, and the FB "
+        "monogram at 32px and below.",
+    ]),
+    ("1.16.0", "2026-09-25", [
+        "Added a support link in About and on the website. Full Bench is "
+        "free and will stay free; the link covers the server.",
+    ]),
+    ("1.15.0", "2026-09-25", [
+        "Deck names on the website show a sprite of the Pokemon they are "
+        "named after -- two for names like 'Charizard ex / Pidgeot'. "
+        "Rankings, the match feed, deck pages and your own dashboard.",
+    ]),
+    ("1.14.0", "2026-09-25", [
+        "Battle logs are checked for completeness and consistency before "
+        "being recorded: a partial paste, a log cut off before the "
+        "result, or one whose prize counts don't add up is refused and "
+        "kept in ptcgl_logs/rejected for inspection.",
+        "The server now parses each uploaded log itself instead of "
+        "trusting the app's summary. The log is sent with player names "
+        "replaced, so no handle ever leaves the machine.",
+        "The same game uploaded by both players is counted once in the "
+        "global figures.",
+        "Global rankings need a deck to have been played from at least "
+        "three accounts, and uploads are rate-limited per account.",
+    ]),
+    ("1.13.0", "2026-09-24", [
+        "Matches where neither player attacked no longer count. An "
+        "instant concede is not a game, and counting it moves your win "
+        "rate without saying anything about how the decks play. They are "
+        "flagged rather than discarded: still listed in the Matches tab, "
+        "greyed out, and the dashboard says how many were ignored. Can "
+        "be switched off in Settings.",
+        "Ignored matches are not uploaded, so they cannot reach the "
+        "global figures either.",
+        "Sign in through your browser instead of typing a password into "
+        "the app: it shows a short code, opens the site, and you approve "
+        "the computer there. Email and password still works.",
+        "Removed the contribution toggle. An account syncs and counts "
+        "towards the global figures; the app and the site say so plainly "
+        "instead.",
+    ]),
+    ("1.12.0", "2026-09-24", [
+        "Leaving the result screen and coming back no longer triggers a "
+        "second capture of the same match. The screen has to stay gone "
+        "for 12 seconds before another capture is allowed, and a capture "
+        "that turns out to be the same log as the last one is ignored "
+        "rather than reported as a new match.",
+        "Added a second duplicate check for logs that differ only in "
+        "whitespace, which would otherwise hash differently and slip "
+        "through: a match with the same result, turn count and prize "
+        "totals recorded within ten minutes is treated as a rerun.",
+    ]),
+    ("1.11.1", "2026-09-24", [
+        "The server address no longer has to include http://. A browser "
+        "adds it for you silently, so '127.0.0.1:8000' worked there and "
+        "failed in the app, reported as 'could not reach the server'. "
+        "Pasted paths, quotes and trailing slashes are trimmed too, and "
+        "the box shows the address that will actually be used.",
+        "Connection errors say what went wrong: nothing listening, name "
+        "doesn't resolve, no answer (firewall), or a TLS problem.",
+    ]),
+    ("1.11.0", "2026-09-24", [
+        "Settings scrolls. It had grown past the height of a windowed "
+        "app, so the cloud sync section was simply unreachable without "
+        "maximising. The scrollbar appears only when the content "
+        "actually overflows.",
+        "About scrolls the same way, and no longer has a scroller inside "
+        "a scroller.",
+    ]),
+    ("1.10.1", "2026-09-24", [
+        "The bench is back in the small icons. It was dropped below 24px "
+        "on the assumption FB plus three cards would be unreadable at "
+        "that scale; rendering it showed otherwise.",
+    ]),
+    ("1.10.0", "2026-09-24", [
+        "Decks are named from a shared definition list, archetypes.json, "
+        "instead of each machine guessing. This is what will let stats "
+        "be compared between players later; it also just makes the names "
+        "right more often.",
+        "py ptcgl_stats.py --unclassified lists decks with no definition "
+        "yet, grouped by the Pokemon seen, so it's clear what to add.",
+        "A definition now wins outright. Previously the local guess "
+        "could override it and rename a correctly identified deck.",
+        "Card-overlap matching no longer applies to opponents: it was "
+        "merging different strangers' decks that happened to share "
+        "staples. It still applies to your own decks.",
+        "Password reset by email on the server, with a console fallback "
+        "so it works before you configure a mail provider.",
+    ]),
+    ("1.9.0", "2026-09-24", [
+        "Removed the banner across the top of the screen. It sat exactly "
+        "where the battle log's copy button is, so it covered the button "
+        "the capture needs to click. The cover over Continue, which is "
+        "the one that actually protects the match, stays.",
+        "Capture progress now shows on the app's title bar instead.",
+        "The header shows whether you're signed in, with Sign in or Sync "
+        "beside it.",
+        "Stop tracking and Refresh are hidden unless Developer mode is "
+        "on. Tracking starts and stops with the game, so they were "
+        "clutter. Start tracking still appears when tracking is off.",
+        "The website refreshes itself every 30 seconds while its tab is "
+        "visible, and shows how old the figures are. There's a Refresh "
+        "button too.",
+    ]),
+    ("1.8.0", "2026-09-24", [
+        "Logo now reads FB in gold above the bench, rather than a blank "
+        "gold card. Icons at 24px and below drop the bench and show just "
+        "the monogram, because two letters four pixels tall are not "
+        "readable next to anything else.",
+    ]),
+    ("1.7.0", "2026-09-24", [
+        "Builds are ~30 MB smaller: switched to headless OpenCV, which "
+        "is the same library without the GUI parts this app never used.",
+        "The website serves the download itself, with a long cache "
+        "lifetime and resumable transfers.",
+    ]),
+    ("1.6.0", "2026-09-24", [
+        "Sign in with an email and password from inside the app -- no "
+        "keys to copy. You can create an account from Settings too.",
+        "Each computer gets its own sign-in, so signing one out leaves "
+        "the others alone. The Account page on the website lists them.",
+        "The app stores a device token, never your password.",
+    ]),
+    ("1.5.0", "2026-09-24", [
+        "Cloud sync: your history uploads to your own account and pulls "
+        "back anything recorded on another PC, so two machines share one "
+        "record.",
+        "Sync is keyed on each battle log's hash, so it is safe to run "
+        "twice and nothing is ever deleted or duplicated.",
+        "Player names are never uploaded, yours or your opponents'.",
+    ]),
+    ("1.4.0", "2026-09-24", [
+        "Selected tab text is dark blue again -- white on gold was hard "
+        "to read.",
+        "Deck and list pickers use a larger typeface, so the dashboard "
+        "can be read at a glance.",
+        "Dropped card image fetching. The card service was unreliable "
+        "and returning server errors, and the pictures were never worth "
+        "the dependency.",
+        "View list gained a Copy list button: it puts the list back on "
+        "the clipboard exactly as PTCGL produced it, ready to paste into "
+        "the game's deck import.",
+    ]),
+    ("1.3.0", "2026-09-24", [
+        "Light theme: white throughout, with the blue kept for the header "
+        "bar and gold for selection. The all-blue window was too heavy.",
+        "Selected rows and the active tab are gold with dark text.",
+        "Win and loss colours darkened so they stay readable on white; "
+        "every text colour now clears the 4.5 contrast threshold.",
+        "Taskbar icon no longer looks blurry. Each icon size is drawn at "
+        "its real size with whole-pixel geometry instead of being shrunk "
+        "from a large image, which was antialiasing it into mush.",
+    ]),
+    ("1.2.0", "2026-09-24", [
+        "Card images failing now say why, instead of silently leaving the "
+        "plain text list. The view reports how many cards matched and "
+        "what went wrong.",
+        "Images are decoded and resized through Pillow, so a JPEG or "
+        "WebP from the card service no longer loads as a blank tile, and "
+        "thumbnails are sharp at any size.",
+        "Added diag_cards.py, which walks the whole lookup path and "
+        "prints where it breaks.",
+    ]),
+    ("1.1.0", "2026-09-24", [
+        "Recoloured to deep blue, white and gold -- the colours from the "
+        "back of a Pokemon card.",
+        "The capture banner and the Continue cover stay red on purpose: "
+        "they are warnings, and the gold accent would read as "
+        "decoration.",
+        "Activity log recoloured to match; every widget in the app now "
+        "draws from the palette.",
+    ]),
+    ("1.0.0", "2026-09-24", [
+        "Renamed to Full Bench. The old name leaned on a trademark that "
+        "Nintendo actively defends, which would have been a problem the "
+        "moment this went on a public domain.",
+        "New logo: an active Pokemon above a full row of five benched, "
+        "drawn from plain shapes with no game artwork. Small icon sizes "
+        "use a simplified three-card bench so they stay readable.",
+    ]),
+    ("0.11.0", "2026-09-24", [
+        "Paste decklist now reads straight from the clipboard -- copy in "
+        "PTCGL, click once, done. The result is reported next to the "
+        "deck picker instead of in a popup.",
+        "View list shows card images. The list carries set code and "
+        "collector number, so each print is identified exactly rather "
+        "than guessed.",
+        "Removed the images checkbox from the Matches tab.",
+    ]),
+    ("0.10.0", "2026-09-24", [
+        "Decklists can be pasted in and stored against a deck. Paste an "
+        "updated list and it is kept as v2, v3 and so on; pasting the "
+        "same list again does not create a new version.",
+        "A version picker sits beside the deck picker on the Dashboard, "
+        "so you can see how a deck performed on each list.",
+        "Every match records which list was current when it was played, "
+        "so changing a list never rewrites past results.",
+        "View list shows the stored decklist for the selected version.",
+    ]),
+    ("0.9.0", "2026-09-24", [
+        "Matchups moved onto the Dashboard and now follow the deck "
+        "picker, so choosing a deck shows that deck's matchups rather "
+        "than every deck's at once.",
+        "Removed the Decks tab; deck renaming lives in the Matches tab "
+        "and archetype renaming sits under the matchup list.",
+        "Win rates are green at 50% or above and red below it, on the "
+        "cards and in the matchup list. No data stays white -- an empty "
+        "record is not a losing one.",
+        "Confirmed working windowed at 1600x900.",
+    ]),
+    ("0.8.0", "2026-09-24", [
+        "The Continue button is now covered while the battle log is being "
+        "saved, so a fast click can't throw the match away. The cover "
+        "clears itself when the copy finishes, after four seconds "
+        "regardless, or if you click it or press Escape. It can be "
+        "turned off in Settings.",
+    ]),
+    ("0.7.0", "2026-09-24", [
+        "Capture reacts about 3.5x faster. The result screen is now "
+        "spotted by a colour check on the CONTINUE bar costing 0.2ms, "
+        "instead of matching templates across the whole screen; "
+        "detection went from ~430ms to ~125ms, and the whole capture "
+        "from roughly 1.5s to 0.6s.",
+        "The warning banner is now a full-width bar across the top of "
+        "the screen reading DON'T PRESS CONTINUE, rather than a small "
+        "box that was easy to miss.",
+        "Confirmed working at 1080p as well as 1440p.",
+    ]),
+    ("0.6.1", "2026-09-24", [
+        "build.py now checks that every required package is installed "
+        "before building, instead of producing an exe that fails on "
+        "launch asking for pip install.",
+    ]),
+    ("0.6.0", "2026-09-22", [
+        "Decks are now identified by card overlap with matches already "
+        "recorded, not just by what happened in one game. A two-turn "
+        "concession gets the right deck name because the cards match a "
+        "deck played before.",
+        "When a later match names a deck better than an earlier one did, "
+        "the earlier matches are renamed to match.",
+        "Opponent archetypes get the same treatment, so the same deck "
+        "isn't filed under two names.",
+        "Cards revealed on bullet lines -- search effects, your opening "
+        "hand -- are now recorded. They were being dropped entirely.",
+        "Evolutions now count towards naming a deck, which is often the "
+        "only evidence in a short game.",
+    ]),
+    ("0.5.0", "2026-09-22", [
+        "Deck names are now worked out from damage dealt and ability use "
+        "rather than alphabetically, so the main attacker names the deck "
+        "instead of whichever card sorted first.",
+        "Deck names can be edited by hand, per match or across every match "
+        "at once. Hand-edited names survive a reparse.",
+        "Added this About tab.",
+        "Fixed a modal dialog leaving its grab held, which could stop the "
+        "next dialog from opening.",
+        "Activity tab is hidden unless Developer mode is ticked.",
+    ]),
+    ("0.4.0", "2026-09-22", [
+        "Databases from older versions upgrade themselves instead of "
+        "failing with a missing-column error.",
+        "Fixed a parser bug that filed the word 'them' as a card.",
+    ]),
+    ("0.3.0", "2026-09-22", [
+        "Start with Windows, and start tracking automatically when PTCGL "
+        "launches.",
+        "Capture is about four times faster, and a banner warns you not to "
+        "press Continue while it works.",
+        "Missed captures are counted and reported.",
+    ]),
+    ("0.2.0", "2026-09-22", [
+        "Desktop app with Dashboard, Matches and Decks tabs.",
+        "Both decks detected from the battle log automatically.",
+        "Mulligan counts and the extra cards each side drew from them.",
+        "Dashboard filters by deck; going first / going second split.",
+    ]),
+    ("0.1.0", "2026-09-22", [
+        "First working version: clipboard watcher, battle log parser, "
+        "SQLite storage, automatic copying from the result screen.",
+    ]),
+]
+
+
+def latest():
+    return CHANGELOG[0] if CHANGELOG else (VERSION, "", [])

@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Optional overrides. This file is EMPTY on purpose and nothing needs",
+    "adding to it.",
+    "",
+    "Deck names are worked out from the cards actually played: matches are",
+    "grouped by the Pokemon seen, and each group is named after the one",
+    "that does the attacking. That keeps working when a set drops, because",
+    "nobody has to tell it anything.",
+    "",
+    "Add an entry here only to force a particular name -- if the automatic",
+    "one is wrong and it bothers you. A deck matches when every card in",
+    "'requires' was seen AND at least one in 'requires_any' was seen:",
+    "",
+    "  { \"name\": \"Team Rocket's\",",
+    "    \"requires\": [],",
+    "    \"requires_any\": [\"Team Rocket's Mewtwo ex\", \"Team Rocket's Spidops\"],",
+    "    \"signals\": [\"Team Rocket's Petrel\"],",
+    "    \"excludes\": [] }",
+    "",
+    "Anything listed here wins over the automatic name."
+  ],
+  "updated": "2026-09-25",
+  "archetypes": []
+}
