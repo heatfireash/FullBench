@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.30.0"
+VERSION = "1.31.0"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,50 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.31.0", "2026-09-26", [
+        "Tracking no longer switches on with the game closed. Any window "
+        "with 'Pokemon TCG Live' in its title used to count as the game "
+        "-- a browser tab on a deck site, a YouTube video, an Explorer "
+        "window on the install folder. A window now only counts if it "
+        "belongs to the game itself, and the running/closed state has to "
+        "be seen twice in a row before tracking starts or stops.",
+        "The log names the window it recognised as the game, so if it "
+        "ever gets it wrong again the culprit is right there. Running "
+        "'py game_watch.py' lists every candidate window and why each "
+        "was accepted or ignored.",
+        "The app checks for a newer version when it starts and every six "
+        "hours, and offers to open the download page. Updating is up to "
+        "you -- older versions keep tracking and syncing. Only if a "
+        "release fixes what gets uploaded will older ones be asked to "
+        "update before syncing, and then nothing is lost: every match "
+        "uploads once you have.",
+        "Clicking download after an update could hand you the old exe "
+        "back from your browser's cache. The download link now always "
+        "points at the current version's own file.",
+        "Read back any game: 'View battle log' on the Matches tab opens "
+        "the full log, turn by turn. On the website, the new Log column "
+        "on your dashboard does the same, with You and Opponent in place "
+        "of names. Logs of matches you've already synced fill in on the "
+        "next sync.",
+        "Syncing sends only what the server doesn't have. It used to "
+        "re-upload every match every time -- about 1.3 MB at 120 games -- "
+        "and now a sync with nothing new is around 16 KB. A long backlog "
+        "goes up newest first, as fast as the hourly upload limit allows, "
+        "instead of being sent in full and mostly turned away.",
+        "Played on your phone? 'Add a match' on the website dashboard takes "
+        "a pasted battle log and records it like any other game. It's "
+        "checked the same way, names are removed before it's saved, and "
+        "if the log doesn't make clear which player you were, it asks.",
+        "The same game can't be counted twice, whichever way it arrives: "
+        "pasted twice, pasted and also recorded by the app, or recorded on "
+        "two PCs. Games are matched on their content, not on how the text "
+        "was copied, and the app adopts the website's copy instead of "
+        "keeping its own.",
+        "Website dashboard: the Matchups heading showed '<Macro deck>' and "
+        "the deck filter forgot what you'd picked. Both fixed, and a "
+        "filtered dashboard now shows the chosen deck with its sprites "
+        "above the stats, with one click back to all decks.",
+    ]),
     ("1.30.0", "2026-09-25", [
         "Website footer now links to @fullbenchgg on X, alongside the "
         "support link and the download.",

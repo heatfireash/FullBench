@@ -557,3 +557,69 @@ if __name__ == "__main__":
     out = parse(raw, me)
     out.pop("attacks", None)
     print(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+def log_view_lines(text: str, anonymise: bool = False):
+    """
+    The log as (kind, text) lines for display.
+
+    kind is one of: "turn_you", "turn_opp", "turn" (headings), "you",
+    "opp", "line", "detail", "cards", "win", "loss", "gap".
+
+    anonymise=True is for a log fetched back from the server, where the
+    names are PlayerA/PlayerB: they are shown as You and Opponent. A log
+    from this PC keeps the real names -- it is your own copy.
+    """
+    t = _norm(text)
+    # In a log from the server, PlayerA is always you: the app and the
+    # website both label it that way before upload.
+    d = parse(t, me="PlayerA" if anonymise and "PlayerA" in t else None)
+    me = d.get("player") if d.get("parse_ok") else None
+    opp = d.get("opponent") if me else None
+    if anonymise and me and opp:
+        for name, you in ((me, True), (opp, False)):
+            n = re.escape(name)
+            t = re.sub(rf"(?<!\w){n}['’]s\b",
+                       "Your" if you else "Opponent's", t)
+            t = re.sub(rf"(?<!\w){n} wins\.",
+                       "You win." if you else "Opponent wins.", t)
+            t = re.sub(rf"(?<!\w){n}(?!\w)",
+                       "You" if you else "Opponent", t)
+        t = re.sub(r"(?<=[a-z,] )(You|Your|Opponent)\b",
+                   lambda m: m.group(1).lower(), t)
+        me, opp = "You", "Opponent"
+
+    def owner(line):
+        for who, label in ((me, "you"), (opp, "opp")):
+            if who and (line.startswith(who + " ") or
+                        line.startswith(who + "'s ") or
+                        line.startswith(who + "’s ") or
+                        (who == "You" and line.startswith("Your "))):
+                return label
+        return ""
+
+    out = []
+    for raw in t.split("\n"):
+        line = raw.strip()
+        if not line:
+            if out and out[-1][0] != "gap":
+                out.append(("gap", ""))
+            continue
+        if line == "Setup":
+            out.append(("turn", line))
+        elif line.endswith("Turn") and len(line) < 60:
+            w = owner(line)
+            out.append(("turn_" + w if w else "turn", line))
+        elif line.startswith("•"):
+            out.append(("cards", line.lstrip("• ").strip()))
+        elif line.startswith("- "):
+            out.append(("detail", line[2:]))
+        elif line.endswith(" wins.") or line.endswith("You win."):
+            won = (me and (line.endswith(f"{me} wins.") or
+                           line.endswith("You win.")))
+            out.append(("win" if won else "loss", line))
+        else:
+            out.append((owner(line) or "line", line))
+    while out and out[-1][0] == "gap":
+        out.pop()
+    return out

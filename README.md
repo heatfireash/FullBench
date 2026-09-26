@@ -86,7 +86,9 @@ published — its anti-spam and data-validation checks work better when
 nobody can read exactly what they look for. Sync is optional and off
 until you sign in; `cloud.py` is the complete record of what gets sent.
 Player names are stripped from logs before upload (`pseudonymise()` in
-`ptcgl_parse.py`).
+`ptcgl_parse.py`). The server keeps each log, without names, so you can
+read your games back on the website; only your own account can open
+them.
 
 ## Contributing / reporting a bug
 

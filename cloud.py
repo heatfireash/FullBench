@@ -15,8 +15,11 @@ site, and receives a device token once you approve the computer there.
 The app never handles a password. Each computer gets its own token, so
 signing one out leaves the others alone.
 
-Only match statistics and your own decklists are sent. Player names,
-yours and your opponents', are never uploaded.
+What is sent: match statistics, your own decklists, and each battle log
+with both player names replaced by PlayerA/PlayerB. The server re-reads
+the log to check the numbers, and keeps it so you can view your games on
+the website -- only your account can open them. Player names, yours and
+your opponents', are never uploaded.
 """
 
 import json
@@ -83,12 +86,61 @@ def normalise_url(url):
     return f"{scheme}://{netloc}"
 
 
+try:
+    from version import VERSION as APP_VERSION
+except ImportError:
+    APP_VERSION = "0"
+
+# Set when the server refuses to sync because this build is too old:
+# {"need": "1.31.0", "page": "https://fullbench.gg/download"}. The app
+# reads it after a sync to show the update prompt.
+update_required = None
+
+
 def _headers(token=None):
     h = {"Content-Type": "application/json",
-         "User-Agent": "FullBench-sync/1"}
+         "User-Agent": f"FullBench/{APP_VERSION}",
+         # The server declines to sync builds older than the current
+         # release, so it needs to know which one this is.
+         "X-FullBench-Version": APP_VERSION}
     if token:
         h["Authorization"] = f"Bearer {token}"
     return h
+
+
+def vtuple(v):
+    """'1.31.0' -> (1, 31, 0). Anything unreadable sorts as oldest."""
+    try:
+        return tuple(int(x) for x in str(v).strip().split("."))
+    except (TypeError, ValueError):
+        return (0,)
+
+
+def check_version(base_url=None):
+    """
+    Ask the server what the current release is.
+
+    Returns None if it can't be reached, otherwise a dict:
+        latest      newest version on the download page
+        min_sync    oldest version allowed to sync
+        page        the download page to open
+        newer       True if latest is newer than this build
+        must        True if this build can no longer sync
+    """
+    base_url = normalise_url(base_url or DEFAULT_SERVER)
+    try:
+        d = _get(base_url, "/v1/version", None)
+    except Exception:
+        return None
+    latest = d.get("version") or ""
+    need = d.get("min_sync") or ""
+    return {
+        "latest": latest,
+        "min_sync": need,
+        "page": d.get("page") or f"{base_url}/download",
+        "newer": vtuple(latest) > vtuple(APP_VERSION),
+        "must": bool(need) and vtuple(APP_VERSION) < vtuple(need),
+    }
 
 
 def _post(base_url, path, token, payload):
@@ -196,6 +248,19 @@ def sign_out(base_url, token):
     return True, "signed out on this computer"
 
 
+def fetch_log(base_url, token, log_hash):
+    """
+    A match's log from your account, names already removed. Returns the
+    text, or None if the server has none for it or can't be reached.
+    """
+    base_url = normalise_url(base_url)
+    try:
+        d = _get(base_url, "/v1/log/" + urllib.parse.quote(log_hash), token)
+        return d.get("text")
+    except Exception:
+        return None
+
+
 def check(base_url, token):
     """Confirm the stored token still works."""
     base_url = normalise_url(base_url)
@@ -226,31 +291,46 @@ def _log_payload(raw_path):
         return None, None
 
 
-def _local_payload(conn):
-    # Matches flagged as not-a-game stay on this machine. Uploading them
-    # would put instant concedes into everyone's global figures.
+def _uploadable(conn):
+    """
+    {log_hash: row} for every match this PC may upload. Matches flagged
+    as not-a-game stay on this machine: uploading them would put instant
+    concedes into everyone's global figures.
+    """
     try:
         rows = conn.execute(
             "SELECT * FROM matches WHERE COALESCE(excluded,'') = ''"
         ).fetchall()
     except sqlite3.OperationalError:
         rows = conn.execute("SELECT * FROM matches").fetchall()
-    matches = []
-    for r in rows:
-        m = {out: _col(r, local) for out, local in FIELDS.items()}
-        if not m["log_hash"]:
-            continue
-        raw = _col(r, "raw_path")
-        if raw:
-            m["log_text"], m["match_fp"] = _log_payload(raw)
-        for key, local in (("my_cards", "player_cards"),
-                           ("opp_cards", "opponent_cards")):
-            try:
-                m[key] = json.loads(_col(r, local) or "{}")
-            except Exception:
-                m[key] = {}
-        matches.append(m)
+    return {_col(r, "log_hash"): r for r in rows if _col(r, "log_hash")}
 
+
+def _match_payload(r):
+    """One match as the server wants it. Reads and anonymises the log
+    file, so it is only called for matches actually being uploaded."""
+    m = {out: _col(r, local) for out, local in FIELDS.items()}
+    raw = _col(r, "raw_path")
+    if raw:
+        m["log_text"], m["match_fp"] = _log_payload(raw)
+    for key, local in (("my_cards", "player_cards"),
+                       ("opp_cards", "opponent_cards")):
+        try:
+            m[key] = json.loads(_col(r, local) or "{}")
+        except Exception:
+            m[key] = {}
+    return m
+
+
+def _has_log_file(r):
+    raw = _col(r, "raw_path")
+    try:
+        return bool(raw) and Path(raw).exists()
+    except OSError:
+        return False
+
+
+def _local_decks(conn):
     decks = []
     try:
         for d in conn.execute(
@@ -261,7 +341,7 @@ def _local_payload(conn):
                           "list_text": d["list_text"], "total": d["total"]})
     except sqlite3.OperationalError:
         pass
-    return matches, decks
+    return decks
 
 
 def _insert_remote(conn, matches, decks):
@@ -304,12 +384,79 @@ def _insert_remote(conn, matches, decks):
     return added
 
 
+def _adopt_aliases(conn, aliases):
+    """
+    The server already had some of these games under another id -- the
+    same match pasted on the website, or recorded on another PC. Take
+    its id for the local copy, so this PC doesn't pull that match down
+    as a second game and count it twice.
+
+    If a pulled copy is already here, it goes and the local one (which
+    has the log file) stays.
+    """
+    n = 0
+    for a in aliases or []:
+        yours, theirs = a.get("yours"), a.get("server")
+        if not yours or not theirs or yours == theirs:
+            continue
+        conn.execute("DELETE FROM matches WHERE log_hash=? AND "
+                     "COALESCE(raw_path,'') = ''", (theirs,))
+        if conn.execute("SELECT 1 FROM matches WHERE log_hash=?",
+                        (theirs,)).fetchone():
+            # both copies have files: keep the older, drop this one
+            conn.execute("DELETE FROM matches WHERE log_hash=?", (yours,))
+        else:
+            conn.execute("UPDATE matches SET log_hash=? WHERE log_hash=?",
+                         (theirs, yours))
+        n += 1
+    conn.commit()
+    return n
+
+
+# Uploads go in batches. The server takes at most 40 new matches an hour
+# per account anyway, so a first sync of a long history is spread over
+# several syncs whatever happens; batching keeps each request small.
+BATCH = 50
+
+
+class _SyncError(Exception):
+    pass
+
+
+def _sync_post(base_url, path, token, payload):
+    """POST with the sync error handling shared by every step."""
+    global update_required
+    try:
+        return _post(base_url, path, token, payload)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise _SyncError("signed out - sign in again")
+        if e.code == 426:
+            info = check_version(base_url) or {}
+            update_required = {
+                "need": info.get("min_sync") or info.get("latest") or "",
+                "page": info.get("page") or f"{base_url}/download"}
+            raise _SyncError("update needed to sync - your matches are "
+                             "safe here and will upload after you update")
+        raise
+    except Exception as e:
+        raise _SyncError(f"sync failed: {_err(e)}")
+
+
 def sync(base_url, token, db_path=None):
     """
     Push local matches, pull remote ones. Returns (ok, message).
 
+    1. Send the server the hashes of everything uploadable (64 bytes a
+       match) and ask which it needs.
+    2. Upload only those, in batches -- reading and anonymising a log
+       only for a match that is actually going up.
+    3. The last request also pulls down anything recorded on another PC.
+
+    Against a server too old to plan, everything is sent as before.
     Nothing is deleted on either side: this only ever adds.
     """
+    global update_required
     base_url = normalise_url(base_url)
     path = Path(db_path or DB_PATH)
     if not path.exists():
@@ -318,26 +465,74 @@ def sync(base_url, token, db_path=None):
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     try:
-        matches, decks = _local_payload(conn)
-        payload = {"matches": matches, "decks": decks,
-                   "have": [m["log_hash"] for m in matches]}
+        local = _uploadable(conn)
+        waiting = 0
+        # everything this PC holds, uploadable or not, so the pull never
+        # sends back something already here
+        held = [r[0] for r in conn.execute(
+            "SELECT log_hash FROM matches WHERE log_hash IS NOT NULL")]
+
         try:
-            res = _post(base_url, "/v1/sync", token, payload)
-        except urllib.error.HTTPError as e:
-            if e.code == 401:
-                return False, "signed out - sign in again"
-            return False, f"sync failed: {_err(e)}"
-        except Exception as e:
-            return False, f"sync failed: {_err(e)}"
+            try:
+                plan = _sync_post(base_url, "/v1/sync/plan", token,
+                                  {"have": list(local)})
+                new = [h for h in plan.get("new", []) if h in local]
+                # newest first, so a long backlog shows recent games
+                # first; only as many as the upload limit has room for
+                new.sort(key=lambda h: _col(local[h], "captured_at") or "",
+                         reverse=True)
+                room = plan.get("room")
+                if room is not None and len(new) > room:
+                    waiting = len(new) - room
+                    new = new[:room]
+                # filling in a missing log isn't a new match: no limit
+                send = new + [h for h in plan.get("want_log", [])
+                              if h in local and _has_log_file(local[h])]
+            except urllib.error.HTTPError as e:
+                if e.code not in (404, 405):
+                    raise _SyncError(f"sync failed: {_err(e)}")
+                send = list(local)                 # older server: send all
+
+            added, rejected, res = 0, [], {}
+            batches = [send[i:i + BATCH]
+                       for i in range(0, len(send), BATCH)] or [[]]
+            merged = 0
+            for i, batch in enumerate(batches):
+                last = (i == len(batches) - 1)
+                if last and merged:
+                    held = [r[0] for r in conn.execute(
+                        "SELECT log_hash FROM matches "
+                        "WHERE log_hash IS NOT NULL")]
+                payload = {"matches": [_match_payload(local[h])
+                                       for h in batch],
+                           "decks": _local_decks(conn) if last else [],
+                           "have": held if last else [],
+                           "pull": last}
+                try:
+                    res = _sync_post(base_url, "/v1/sync", token, payload)
+                except urllib.error.HTTPError as e:
+                    raise _SyncError(f"sync failed: {_err(e)}")
+                added += res.get("added", 0)
+                rejected += res.get("rejected") or []
+                # before the pull is written, so it can't re-add them
+                merged += _adopt_aliases(conn, res.get("aliases"))
+        except _SyncError as e:
+            return False, str(e)
+        update_required = None
 
         pulled = _insert_remote(conn, res.get("matches", []),
                                 res.get("decks", []))
-        msg = (f"uploaded {res.get('added', 0)}, downloaded {pulled}, "
+        msg = (f"uploaded {added}, downloaded {pulled}, "
                f"{res.get('server_total', 0)} stored in your account")
-        rej = res.get("rejected") or []
-        if rej:
+        if merged:
+            msg += (f" - {merged} already in your account from the website "
+                    f"or another PC, not added twice")
+        if waiting:
+            msg += (f" - {waiting} more will upload over the next few "
+                    f"syncs (hourly limit)")
+        if rejected:
             reasons = {}
-            for x in rej:
+            for x in rejected:
                 reasons[x.get("reason", "?")] = reasons.get(x.get("reason", "?"), 0) + 1
             msg += " - " + ", ".join(f"{n} rejected ({why})"
                                      for why, n in reasons.items())
