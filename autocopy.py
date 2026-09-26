@@ -143,10 +143,20 @@ COPY_REGION = (0.50, 0.00, 1.00, 0.45)   # x0, y0, x1, y1 as fractions
 
 
 def find_window():
-    for w in gw.getAllWindows():
-        if WINDOW_TITLE_HINT.lower() in w.title.lower() and w.visible:
-            return w
-    return None
+    """
+    The game's own window. Matching the title alone would also pick up a
+    browser tab or Explorer window with the same words in it -- and then
+    screenshot and click *that* -- so ownership is checked too.
+    """
+    try:
+        import game_watch
+        return game_watch.game_window(require_visible=True)
+    except ImportError:
+        for w in gw.getAllWindows():
+            if w.title.strip().lower() == WINDOW_TITLE_HINT.lower() \
+                    and w.visible:
+                return w
+        return None
 
 
 def grab(win, region=None):

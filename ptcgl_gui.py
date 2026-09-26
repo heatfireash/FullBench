@@ -255,6 +255,9 @@ class App(tk.Tk):
         self._start_game_watch()
         if self.cfg.get("start_minimised"):
             self.iconify()
+        self._update_info = None       # set when a newer build exists
+        self._update_prompted = None   # version already shown this run
+        self.after(4000, self._check_for_update)
 
     def _style(self):
         s = ttk.Style(self)
@@ -341,6 +344,12 @@ class App(tk.Tk):
                                       command=self._cloud_browser_login)
         self.btn_cloud_sync = ttk.Button(self.acct, text="Sync",
                                          command=self._cloud_sync)
+        # Shown only when a newer build is out; stays until updated, so
+        # closing the popup with "Later" doesn't lose the way back to it.
+        self.btn_update = ttk.Button(self.acct, text="Update available",
+                                     style="Go.TButton",
+                                     command=lambda: self._show_update(
+                                         force=True))
 
         tk.Frame(self, bg=ACCENT, height=4).pack(fill="x")
 
@@ -493,6 +502,8 @@ class App(tk.Tk):
 
         btns = tk.Frame(left, bg=SURFACE)
         btns.pack(fill="x", pady=(6, 0))
+        ttk.Button(btns, text="View battle log", style="Go.TButton",
+                   command=self._view_log).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="Rename deck for this match",
                    command=lambda: self._edit_deck(scope="match")).pack(
             side="left")
@@ -502,6 +513,9 @@ class App(tk.Tk):
         tk.Label(btns, text="double-click a row to rename",
                  bg=SURFACE, fg=MUTED, font=("Segoe UI", 9)).pack(side="left",
                                                                 padx=8)
+        self._toast_lbl = tk.Label(left, text="", bg=SURFACE, fg=MUTED,
+                                   font=("Segoe UI", 9), anchor="w")
+        self._toast_lbl.pack(fill="x", pady=(4, 0))
         pane.add(left, stretch="always")
 
         right = tk.Frame(pane, bg=SURFACE, width=380)
@@ -1039,8 +1053,15 @@ class App(tk.Tk):
         dev = bool(self.cfg.get("developer_mode"))
         email = self.cfg.get("cloud_email") if self.cfg.get("cloud_token") else None
 
-        for w in (self.acct_label, self.btn_account, self.btn_cloud_sync):
+        for w in (self.acct_label, self.btn_account, self.btn_cloud_sync,
+                  self.btn_update):
             w.pack_forget()
+        info = getattr(self, "_update_info", None)
+        if info:
+            self.btn_update.configure(
+                text="Update to sync" if info.get("must")
+                else "Update available")
+            self.btn_update.pack(side="left", padx=(0, 10))
         if email:
             self.acct_label.configure(text=f"signed in as {email}")
             self.acct_label.pack(side="left", padx=(0, 10))
@@ -1173,10 +1194,15 @@ class App(tk.Tk):
         def run():
             ok, msg = cloud.sync(self._server(), token, DB_PATH)
             self.log(f"cloud sync: {msg}")
+            blocked = cloud.update_required
 
             def done():
                 if hasattr(self, "cloud_note"):
                     self.cloud_note.configure(text=msg, fg=WIN if ok else RED)
+                if blocked:
+                    # the server is refusing this build: find out what's
+                    # current and put the prompt up
+                    self._check_for_update(reschedule=False)
                 if not ok and "sign in again" in msg:
                     self.cfg["cloud_token"] = ""
                     self.settings_mod.save(self.cfg)
@@ -1187,6 +1213,105 @@ class App(tk.Tk):
             self.after(0, done)
 
         threading.Thread(target=run, daemon=True).start()
+
+    # ---- updates
+    UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000   # the app is often left open
+
+    def _check_for_update(self, reschedule=True):
+        """Ask the server for the current release, off the UI thread."""
+        import cloud
+
+        def run():
+            info = cloud.check_version(self._server())
+
+            def done():
+                if info and (info["newer"] or info["must"]):
+                    self._update_info = info
+                    self.log(f"update available: {info['latest']} "
+                             f"(this is {VERSION})"
+                             + (" - syncing paused until updated"
+                                if info["must"] else ""))
+                    self._header_state()
+                    self._show_update()
+                elif info:
+                    self._update_info = None
+                    self._header_state()
+            self.after(0, done)
+
+        threading.Thread(target=run, daemon=True).start()
+        if reschedule:
+            self.after(self.UPDATE_RECHECK_MS, self._check_for_update)
+
+    def _show_update(self, force=False):
+        """
+        The update prompt. Shown once per new version per run unless asked
+        for from the header button, so "Later" means later.
+        """
+        info = self._update_info
+        if not info:
+            return
+        if not force and self._update_prompted == info["latest"]:
+            return
+        self._update_prompted = info["latest"]
+        if getattr(self, "_update_dlg", None):
+            try:
+                self._update_dlg.destroy()
+            except tk.TclError:
+                pass
+
+        dlg = tk.Toplevel(self)
+        self._update_dlg = dlg
+        dlg.title("Full Bench update")
+        dlg.configure(bg=SURFACE)
+        dlg.resizable(False, False)
+        # A transient window hides along with a minimised parent, and the
+        # app is often minimised -- the prompt would never be seen.
+        if self.state() != "iconic":
+            dlg.transient(self)
+
+        head = tk.Frame(dlg, bg=HEADER)
+        head.pack(fill="x")
+        tk.Label(head, text=f"Full Bench {info['latest']} is out",
+                 bg=HEADER, fg=HEADER_FG,
+                 font=("Segoe UI Semibold", 13)).pack(anchor="w", padx=18,
+                                                      pady=(14, 0))
+        tk.Label(head, text=f"You have {VERSION}", bg=HEADER, fg="#a9b6da",
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=18,
+                                            pady=(0, 12))
+        tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
+
+        if info["must"]:
+            text = ("Syncing is paused until you update. Your matches are "
+                    "safe on this PC - they'll all upload once the new "
+                    "version is running.\n\nTracking keeps working in the "
+                    "meantime.")
+        else:
+            text = ("A newer version is on the download page. Tracking and "
+                    "syncing keep working either way.")
+        text += ("\n\nTo update: download it, close Full Bench, and "
+                 "replace your old FullBench.exe with the new one. Your "
+                 "matches and settings are kept.")
+        tk.Label(dlg, text=text, bg=SURFACE, fg=TEXT, font=("Segoe UI", 10),
+                 wraplength=400, justify="left").pack(anchor="w", padx=18,
+                                                      pady=(14, 6))
+
+        def download():
+            import webbrowser
+            webbrowser.open(info["page"])
+            dlg.destroy()
+
+        row = tk.Frame(dlg, bg=SURFACE)
+        row.pack(fill="x", padx=18, pady=(8, 16))
+        ttk.Button(row, text="Later", command=dlg.destroy).pack(side="right")
+        ttk.Button(row, text="Open download page", style="Go.TButton",
+                   command=download).pack(side="right", padx=8)
+
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.bind("<Return>", lambda e: download())
+        if self.state() != "iconic":
+            dlg.geometry(f"+{self.winfo_rootx()+120}+{self.winfo_rooty()+80}")
+        dlg.lift()
+        dlg.focus_force()
 
     # ---- game detection
     def _start_game_watch(self):
@@ -1210,7 +1335,13 @@ class App(tk.Tk):
         self._game_up = True
         if hasattr(self, "game_lbl"):
             self.game_lbl.configure(text="\u25cf PTCGL is running", fg=WIN)
-        self.log("PTCGL detected.")
+        try:
+            import game_watch
+            seen = game_watch.last_match
+        except ImportError:
+            seen = ""
+        # Naming the window makes a false detection easy to track down.
+        self.log(f"PTCGL detected: {seen}." if seen else "PTCGL detected.")
         if self.cfg.get("auto_track_on_game_launch") and not self.stop_evt:
             self.log("auto-starting tracking.")
             self.toggle()
@@ -1489,6 +1620,170 @@ class App(tk.Tk):
 
         widget.bind("<Enter>", enter)
         widget.bind("<Leave>", leave)
+
+    # ---- battle log viewer
+    def _view_log(self):
+        """
+        Show the selected match's full battle log.
+
+        The file on this PC is used when there is one -- real names, it's
+        your own copy. A match synced down from another computer has no
+        file here, so the server's copy is fetched instead, where the
+        names are already You and Opponent.
+        """
+        sel = self.tree.selection()
+        if not sel:
+            self._toast("Select a match first.")
+            return
+        rows = q("SELECT * FROM matches WHERE id=?", (int(sel[0]),))
+        if not rows:
+            return
+        r = rows[0]
+        raw = _col(r, "raw_path")
+        if raw and Path(raw).exists():
+            try:
+                text = Path(raw).read_text(encoding="utf-8",
+                                           errors="replace")
+            except OSError:
+                text = None
+            if text:
+                self._log_window(r, text, anonymised=False,
+                                 path=Path(raw))
+                return
+
+        token = self.cfg.get("cloud_token")
+        if not token:
+            self._toast("This match's log isn't on this PC. Sign in to "
+                        "fetch it from your account.")
+            return
+        self._toast("fetching the log from your account…")
+
+        def run():
+            import cloud
+            text = cloud.fetch_log(self._server(), token, r["log_hash"])
+
+            def done():
+                if text:
+                    self._log_window(r, text, anonymised=True)
+                else:
+                    self._toast("No log for this match on this PC or in "
+                                "your account.")
+            self.after(0, done)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _toast(self, msg):
+        """One-line note under the match list; the log gets it too."""
+        self.log(msg)
+        lbl = getattr(self, "_toast_lbl", None)
+        if lbl is None:
+            return
+        lbl.configure(text=msg)
+        self.after(6000, lambda: lbl.configure(text=""))
+
+    def _log_window(self, r, text, anonymised, path=None):
+        from ptcgl_parse import log_view_lines
+        lines = log_view_lines(text, anonymise=anonymised)
+
+        dlg = tk.Toplevel(self)
+        result = (r["result"] or "?").upper()
+        dlg.title(f"Battle log — {result} vs "
+                  f"{r['opponent_archetype'] or 'unknown'}")
+        dlg.configure(bg=SURFACE)
+        dlg.geometry(f"720x760+{self.winfo_rootx()+80}+"
+                     f"{self.winfo_rooty()+30}")
+
+        head = tk.Frame(dlg, bg=HEADER)
+        head.pack(fill="x")
+        tk.Label(head, text=f"{result}   {r['deck_label'] or 'unknown'}  vs  "
+                            f"{r['opponent_archetype'] or 'unknown'}",
+                 bg=HEADER, fg=HEADER_FG,
+                 font=("Segoe UI Semibold", 13)).pack(anchor="w", padx=16,
+                                                      pady=(12, 0))
+        order = {1: "went first", 0: "went second"}.get(r["went_first"], "")
+        sub = "  ·  ".join(x for x in (
+            (r["captured_at"] or "")[:16].replace("T", " "), order,
+            f"{r['turns']} turns" if r["turns"] else "",
+            f"prizes {r['player_prizes_taken']}-"
+            f"{r['opponent_prizes_taken']}") if x)
+        if anonymised:
+            sub += "  ·  from your account"
+        tk.Label(head, text=sub, bg=HEADER, fg="#a9b6da",
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=16,
+                                            pady=(0, 12))
+        tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
+
+        frame = tk.Frame(dlg, bg=SURFACE)
+        frame.pack(fill="both", expand=True, padx=16, pady=(12, 4))
+        body = tk.Text(frame, bg="#ffffff", fg=TEXT, relief="flat",
+                       font=("Segoe UI", 10), wrap="word", padx=14, pady=10,
+                       spacing1=1, spacing3=1)
+        bar = ttk.Scrollbar(frame, orient="vertical", command=body.yview)
+        body.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        body.pack(side="left", fill="both", expand=True)
+
+        body.tag_configure("turn", font=("Segoe UI Semibold", 10),
+                           foreground=MUTED, spacing1=10, spacing3=3)
+        body.tag_configure("turn_you", font=("Segoe UI Semibold", 10),
+                           foreground=HEADER, spacing1=10, spacing3=3)
+        body.tag_configure("turn_opp", font=("Segoe UI Semibold", 10),
+                           foreground=MUTED, spacing1=10, spacing3=3)
+        body.tag_configure("you", foreground=TEXT)
+        body.tag_configure("opp", foreground="#3d4766")
+        body.tag_configure("line", foreground=TEXT)
+        body.tag_configure("detail", foreground=MUTED, lmargin1=18,
+                           lmargin2=18, font=("Segoe UI", 9))
+        body.tag_configure("cards", foreground=MUTED, lmargin1=30,
+                           lmargin2=30, font=("Segoe UI", 9, "italic"))
+        body.tag_configure("win", foreground=WIN,
+                           font=("Segoe UI Semibold", 10))
+        body.tag_configure("loss", foreground=LOSS,
+                           font=("Segoe UI Semibold", 10))
+
+        turn_no = 0
+        for kind, t in lines:
+            if kind == "gap":
+                continue
+            if kind in ("turn_you", "turn_opp") or \
+                    (kind == "turn" and t != "Setup"):
+                turn_no += 1
+                t = f"{t.upper()}    ·  turn {turn_no}"
+            elif kind == "turn":
+                t = t.upper()
+            elif kind == "cards":
+                t = "• " + t
+            body.insert("end", t + "\n", kind)
+        body.configure(state="disabled")
+
+        note = tk.Label(dlg, text="", bg=SURFACE, fg=MUTED,
+                        font=("Segoe UI", 9))
+        note.pack(anchor="w", padx=16)
+
+        def copy_log():
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()
+            note.configure(text="copied", fg=WIN)
+
+        row = tk.Frame(dlg, bg=SURFACE)
+        row.pack(fill="x", padx=16, pady=12)
+        ttk.Button(row, text="Close", command=dlg.destroy).pack(side="right")
+        ttk.Button(row, text="Copy log", command=copy_log).pack(
+            side="right", padx=8)
+        if path is not None:
+            def open_file():
+                try:
+                    import os
+                    os.startfile(str(path))       # Windows: default editor
+                except Exception as e:
+                    note.configure(text=f"couldn't open it: {e}", fg=LOSS)
+            ttk.Button(row, text="Open file", command=open_file).pack(
+                side="right")
+
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.lift()
+        dlg.focus_force()
 
     def _show_detail(self, _evt):
         sel = self.tree.selection()
