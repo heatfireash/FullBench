@@ -228,9 +228,10 @@ NOT_A_CARD = {"them", "it", "a card", "cards"}
 ATTACHED_RE = re.compile(
     r"^(?:- )?(?P<who>.+?) attached (?P<card>.+?) to (?P<mon>.+?) "
     r"(?:in|on) the (?:Active Spot|Bench)\.$", re.M)
-# "X evolved A to B on the Bench."
+# "X evolved A to B on the Bench." -- and the indented form Grand Tree
+# and Rare Candy produce: "- X evolved A to B on the Bench."
 EVOLVED_RE = re.compile(
-    r"^(?P<who>.+?) evolved (?P<from>.+?) to (?P<to>.+?) "
+    r"^(?:- )?(?P<who>.+?) evolved (?P<from>.+?) to (?P<to>.+?) "
     r"(?:in|on) the (?:Active Spot|Bench)\.$", re.M)
 # "X's Mon used Attack on Y's Target for N damage."
 ATTACK_RE = re.compile(
@@ -482,31 +483,60 @@ def parse(text: str, me: str | None = None) -> dict:
 
 # ------------------------------------------------------------ archetype
 
+# Bump when a change here or in cluster.py should apply to matches
+# already recorded. The app and the server each re-read their stored logs
+# once when they see a newer number.
+#   2 -- ability uses counted; Grand Tree / Rare Candy evolutions
+#        counted; trainer-owned names ("Team Rocket's") no longer look
+#        like one Pokemon; per-match names follow the damage/ability rule
+PARSER_VERSION = 2
+
+_OWNER_RE = re.compile(r"^[^'’]{1,24}['’]s\s+")
+
+
+def _species(name):
+    """"Team Rocket's Mewtwo ex" -> "mewtwo". The trainer's name goes
+    first, or every Team Rocket's card looks like the same Pokemon."""
+    s = _OWNER_RE.sub("", name.strip()).replace("Mega ", "")
+    return (s.split(" ")[0] if s else "").lower()
+
+
+def same_line(a, b):
+    """Rough check for one Pokemon being another's stage (Metang and
+    Metagross), so a deck isn't named after two of its own stages."""
+    aw, bw = _species(a), _species(b)
+    return bool(aw) and aw[:4] == bw[:4]
+
+
 def guess_archetype(card_counts: dict, moves: dict = None,
-                    damage: dict = None, evolutions: dict = None) -> str | None:
+                    damage: dict = None, evolutions: dict = None,
+                    uses: dict = None) -> str | None:
     """
-    Name the deck after what actually carried the game.
+    Name the deck after what actually carried this game, by the same
+    rule the grouping in cluster.py uses for many games:
 
-    Sorting names alphabetically picks the wrong card constantly -- a
-    benched "Mega Skarmory ex" beats the "Mega Excadrill ex" that dealt
-    every point of damage. So score instead, on evidence from the log:
+      * first name: the Pokemon that did the most damage. Only when
+        nothing did any (an early concede) do other signals decide --
+        evolving into a card, using it, copies seen, ex over basics.
+      * second name: whichever other Pokemon did the most work, measured
+        two ways, the larger counting -- a quarter or more of the damage,
+        or its ability used twice or more. A Spidops charging energy
+        three times is part of the deck even though it never attacks.
+        Just being in the deck earns nothing.
 
-      * damage dealt is the strongest signal -- the main attacker is the
-        deck's name in nearly every archetype
-      * repeated ability use marks an engine Pokemon (Metang's Metal
-        Maker, Genesect's Metallic Signal) -- supporting, not headline
-      * copies played breaks ties
-      * ex / Mega cards outrank basics of equal evidence
-
-    Returns "Main Attacker / Engine" when a clear support engine exists,
-    which is how these decks are usually named, otherwise just the
-    attacker.
+    `uses` is how many times each Pokemon used something that did no
+    damage (parse()'s *_ability_uses). Without it, each distinct move
+    name counts once, which undercounts: three Charging Ups look like
+    one.
     """
     if not card_counts:
         return None
     moves = moves or {}
     damage = damage or {}
     evolutions = evolutions or {}
+    if uses is None:
+        uses = {n: len(v) for n, v in moves.items()
+                if not damage.get(n)}
 
     def is_mon(name):
         # Pokemon are the only cards that attack or evolve; anything that
@@ -522,12 +552,12 @@ def guess_archetype(card_counts: dict, moves: dict = None,
         if not is_mon(name):
             continue
         dmg = damage.get(name, 0)
-        uses = len(moves.get(name, []))
+        n_uses = uses.get(name, 0)
         evo = evolutions.get(name, 0)
         scored.append((
             dmg / 100.0 * 3          # damage dominates when there is any
             + evo * 4                # evolving into it is a deliberate act
-            + uses
+            + n_uses
             + premium(name)
             + card_counts.get(name, 0) * 0.25,
             dmg, name))
@@ -537,16 +567,25 @@ def guess_archetype(card_counts: dict, moves: dict = None,
         # picking a card at random and calling it the deck.
         return None
 
-    scored.sort(key=lambda t: (-t[0], t[2]))
+    total = sum(damage.values())
+    if total:
+        # the biggest damage dealer, full stop; score only breaks a tie
+        scored.sort(key=lambda t: (-t[1], -t[0], t[2]))
+    else:
+        scored.sort(key=lambda t: (-t[0], t[2]))
     primary = scored[0][2]
 
-    # an engine: used repeatedly, dealt no damage, and isn't the attacker
-    engines = [(len(moves.get(n, [])), card_counts.get(n, 0), n)
-               for _, dmg, n in scored
-               if n != primary and dmg == 0 and card_counts.get(n, 0) >= 2]
-    engines.sort(reverse=True)
-    if engines and engines[0][1] >= 2:
-        return f"{primary} / {engines[0][2]}"
+    best, best_strength = None, 0.0
+    for _, dmg, n in scored:
+        if n == primary or same_line(primary, n):
+            continue
+        damage_strength = (dmg / total) / 0.25 if total else 0.0
+        use_strength = uses.get(n, 0) / 2.0
+        strength = max(damage_strength, use_strength)
+        if strength > best_strength:
+            best, best_strength = n, strength
+    if best and best_strength >= 1.0:
+        return f"{primary} / {best}"
     return primary
 
 

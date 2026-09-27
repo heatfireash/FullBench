@@ -23,6 +23,7 @@ How it works:
 """
 
 import json
+import re
 from collections import Counter
 
 # Shown in almost every deck, so they say nothing about which deck it is.
@@ -368,11 +369,25 @@ def _name_cluster(c, n):
     return primary
 
 
+_OWNER = re.compile(r"^[^'’]{1,24}['’]s\s+")
+
+
+def _species(name):
+    """
+    "Team Rocket's Mewtwo ex" -> "mewtwo", "Mega Excadrill ex" ->
+    "excadrill". The trainer's name has to go first: compared as it
+    stood, every Team Rocket's card looked like the same Pokemon, so
+    Spidops could never be named beside Mewtwo.
+    """
+    s = _OWNER.sub("", name.strip())
+    s = s.replace("Mega ", "")
+    return (s.split(" ")[0] if s else "").lower()
+
+
 def _same_line(a, b):
     """Rough check for one Pokemon being another's stage."""
-    aw = a.replace("Mega ", "").split(" ")[0].lower()
-    bw = b.replace("Mega ", "").split(" ")[0].lower()
-    return aw[:4] == bw[:4]
+    aw, bw = _species(a), _species(b)
+    return bool(aw) and aw[:4] == bw[:4]
 
 
 def pokemon_from_parse(d, side):

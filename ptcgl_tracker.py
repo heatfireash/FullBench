@@ -537,7 +537,8 @@ def _opponent_label(conn, p):
     # --unclassified, which is the prompt to write a definition.
     return guess_archetype(p["opponent_cards"], p["opponent_moves"],
                            p["opponent_pokemon_damage"],
-                           p["opponent_evolutions"])
+                           p["opponent_evolutions"],
+                           p.get("opponent_ability_uses"))
 
 
 def looks_like_rerun(conn, p, within_minutes=10):
@@ -708,7 +709,8 @@ def store(conn, text: str, me: str, deck_label: str | None,
         # name right after the row is stored (see relabel_from_clusters)
         auto = guess_archetype(p["player_cards"], p["player_moves"],
                                p["player_pokemon_damage"],
-                               p["player_evolutions"])
+                               p["player_evolutions"],
+                               p.get("player_ability_uses"))
     row["deck_label"] = deck_label or auto
     # Which list was in use? The newest version of this deck recorded at
     # or before now. A list pasted later describes later games, not this

@@ -258,6 +258,7 @@ class App(tk.Tk):
         self._update_info = None       # set when a newer build exists
         self._update_prompted = None   # version already shown this run
         self.after(4000, self._check_for_update)
+        self.after(1500, self._reparse_if_needed)
 
     def _style(self):
         s = ttk.Style(self)
@@ -1210,6 +1211,49 @@ class App(tk.Tk):
                     self._header_state()
                 if ok:
                     self.refresh(keep=True)
+            self.after(0, done)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    # ---- re-reading old matches after a naming fix
+    def _reparse_if_needed(self):
+        """
+        When an update changes how logs are read or decks are named, run
+        every saved log through the new code once, so old matches get the
+        corrected names too -- the same as --reparse, but automatic.
+        Decks you renamed by hand keep your name.
+        """
+        try:
+            from ptcgl_parse import PARSER_VERSION
+        except ImportError:
+            return
+        if self.cfg.get("parsed_v", 0) >= PARSER_VERSION:
+            return
+        self.log("updating old matches for the new deck naming\u2026")
+
+        def run():
+            import sqlite3
+            msg = None
+            try:
+                import ptcgl_stats
+                c = sqlite3.connect(DB_PATH, timeout=30)
+                c.row_factory = sqlite3.Row
+                try:
+                    ptcgl_stats.reparse(c)
+                finally:
+                    c.close()
+                ok = True
+            except Exception as e:
+                ok, msg = False, f"{type(e).__name__}: {e}"
+
+            def done():
+                if ok:
+                    self.cfg["parsed_v"] = PARSER_VERSION
+                    self.settings_mod.save(self.cfg)
+                    self.log("old matches updated.")
+                    self.refresh(keep=True)
+                else:
+                    self.log(f"couldn't update old matches: {msg}")
             self.after(0, done)
 
         threading.Thread(target=run, daemon=True).start()

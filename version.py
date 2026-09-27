@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.31.0"
+VERSION = "1.31.1"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,24 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.31.1", "2026-09-26", [
+        "Deck names follow one rule everywhere: the first name is the "
+        "Pokemon that did the most damage; the second is whichever other "
+        "Pokemon did the most work -- a quarter of the damage, or its "
+        "ability used twice or more a game. Team Rocket's Mewtwo ex / "
+        "Team Rocket's Spidops now gets its Spidops.",
+        "Three things were in the way. The website's copy of the log "
+        "reader never counted ability uses, so no deck there could earn "
+        "a second name from an ability. The name saved with each match "
+        "counted how many different abilities a Pokemon had, not how "
+        "often it used them. And every Team Rocket's card -- or Lillie's, "
+        "Ethan's, Misty's -- looked like the same Pokemon, so none could "
+        "be named beside another.",
+        "Evolutions from Grand Tree and Rare Candy are counted now.",
+        "Matches already recorded are re-read with the fix once, "
+        "automatically, on the app's first start and on the website. "
+        "Decks you renamed yourself keep your name.",
+    ]),
     ("1.31.0", "2026-09-26", [
         "Tracking no longer switches on with the game closed. Any window "
         "with 'Pokemon TCG Live' in its title used to count as the game "
