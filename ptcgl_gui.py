@@ -226,6 +226,9 @@ class App(tk.Tk):
                 self.iconbitmap(str(ico))
         except Exception:
             pass
+        # Tk gives Windows the 16px frame for everything, which the
+        # taskbar stretches; replace it once the window exists.
+        self.after(50, self._native_icon)
 
         self.log_q = queue.Queue()
         self.stop_evt = None
@@ -247,6 +250,13 @@ class App(tk.Tk):
             self.shield = ClickShield(self)
         except Exception:
             self.shield = None
+        try:
+            from overlay import MatchToast
+            self.toast = MatchToast(self)
+        except Exception:
+            self.toast = None
+        # matches recorded before this point never get a pop-up
+        self._last_local_id = self._max_local_id()
 
         self._style()
         self._build()
@@ -259,6 +269,81 @@ class App(tk.Tk):
         self._update_prompted = None   # version already shown this run
         self.after(4000, self._check_for_update)
         self.after(1500, self._reparse_if_needed)
+
+    def _native_icon(self):
+        """
+        Set the window's icons through Windows directly, at the sizes it
+        actually draws them.
+
+        Why the taskbar icon was blurry: Tk reads icon.ico itself and, for
+        the modern 32-bit frames it contains, falls back to the FIRST
+        frame in the file -- the 16px one -- for both the title-bar and
+        the taskbar icon. The taskbar draws at 24px, so it stretched a
+        16px image by half again. (The square corners in the taskbar gave
+        it away: only the 16/20px frames have them.)
+
+        LoadImage with a size picks the matching frame out of the .ico,
+        the same way Windows does for the exe on the desktop. The taskbar
+        gets 24px times the display scale, the title bar 16px times it.
+        """
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            u = ctypes.windll.user32
+            ico = _asset("icon.ico")
+            if not ico.exists():
+                return
+
+            # The real display scale. This app isn't DPI-aware, so Windows
+            # reports 96 dpi to it whatever the setting; asking from a
+            # thread that is temporarily DPI-aware gets the true value.
+            dpi = 96
+            try:
+                u.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+                u.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+                old = u.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+                try:
+                    dpi = u.GetDpiForSystem() or 96
+                finally:
+                    if old:
+                        u.SetThreadDpiAwarenessContext(ctypes.c_void_p(old))
+            except Exception:
+                pass
+            scale = dpi / 96.0
+
+            u.LoadImageW.restype = ctypes.c_void_p
+            u.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR,
+                                     wintypes.UINT, ctypes.c_int,
+                                     ctypes.c_int, wintypes.UINT]
+            u.GetParent.restype = wintypes.HWND
+            u.GetParent.argtypes = [wintypes.HWND]
+            u.SendMessageW.restype = ctypes.c_void_p
+            u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT,
+                                       wintypes.WPARAM, ctypes.c_void_p]
+            IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
+
+            def load(px):
+                px = int(round(px))
+                return u.LoadImageW(None, str(ico), IMAGE_ICON, px, px,
+                                    LR_LOADFROMFILE)
+
+            big = load(24 * scale)       # taskbar
+            small = load(16 * scale)     # title bar
+            if not big:
+                self.log("icon: could not load icon.ico")
+                return
+            # kept, so the handles outlive this call
+            self._icons = (big, small)
+            hwnd = u.GetParent(self.winfo_id()) or self.winfo_id()
+            WM_SETICON = 0x80
+            u.SendMessageW(hwnd, WM_SETICON, 1, big)
+            u.SendMessageW(hwnd, WM_SETICON, 0, small or big)
+            self.log(f"icon: set at {int(round(24 * scale))}px "
+                     f"(display {int(scale * 100)}%)")
+        except Exception as e:
+            self.log(f"icon: {e}")
 
     def _style(self):
         s = ttk.Style(self)
@@ -630,6 +715,17 @@ class App(tk.Tk):
              "half-second the copy takes, so a fast click can't throw the "
              "match away. Click it or press Escape to dismiss it early; "
              "it also clears itself after four seconds no matter what."),
+            ("match_toast",
+             "Show a pop-up when a match is recorded",
+             "A small notice in the corner of the game window with the "
+             "result and whether it synced to fullbench.gg. It never "
+             "takes focus from the game and disappears after a few "
+             "seconds, or click it to close it."),
+            ("hide_email",
+             "Hide my email address",
+             "Shows \"signed in\" instead of your email at the top of the "
+             "app and in Settings. Useful when streaming or sharing "
+             "screenshots."),
             ("ignore_no_attack",
              "Ignore matches where neither player attacked",
              "An instant concede is not a game, and counting it moves "
@@ -708,9 +804,7 @@ class App(tk.Tk):
         self.cloud_note.pack(anchor="w", pady=(8, 0))
         self._cloud_state()
         if self.cfg.get("cloud_token"):
-            self.cloud_note.configure(
-                text=f"signed in as {self.cfg.get('cloud_email', '')}",
-                fg=MUTED)
+            self.cloud_note.configure(text=self._signed_in_text(), fg=MUTED)
 
         tk.Label(wrap, text="GAME", bg=SURFACE, fg=MUTED,
                  font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(18, 4))
@@ -744,8 +838,28 @@ class App(tk.Tk):
             self.set_note.configure(
                 text="Activity tab shown" if val else "Activity tab hidden",
                 fg=MUTED)
+        elif key == "hide_email":
+            self._header_state()
+            if self.cfg.get("cloud_token"):
+                self.cloud_note.configure(text=self._signed_in_text(),
+                                          fg=MUTED)
+            self.set_note.configure(text="saved", fg=MUTED)
         else:
             self.set_note.configure(text="saved", fg=MUTED)
+
+    def _signed_in_text(self):
+        """'signed in as you@x.com', or just 'signed in' when hidden."""
+        email = self.cfg.get("cloud_email", "")
+        if self.cfg.get("hide_email") or not email:
+            return "signed in"
+        return f"signed in as {email}"
+
+    def _hide_email_in(self, msg):
+        """Take the address out of a message from the server."""
+        email = self.cfg.get("cloud_email", "")
+        if self.cfg.get("hide_email") and email and email in msg:
+            msg = msg.replace(f" as {email}", "").replace(email, "")
+        return msg
 
     def _ask_name(self, title, prompt, initial):
         """Small modal text prompt, themed to match the app."""
@@ -1064,7 +1178,7 @@ class App(tk.Tk):
                 else "Update available")
             self.btn_update.pack(side="left", padx=(0, 10))
         if email:
-            self.acct_label.configure(text=f"signed in as {email}")
+            self.acct_label.configure(text=self._signed_in_text())
             self.acct_label.pack(side="left", padx=(0, 10))
             self.btn_cloud_sync.pack(side="left")
         else:
@@ -1152,7 +1266,8 @@ class App(tk.Tk):
                         self.settings_mod.save(self.cfg)
                         self._cloud_state()
                         self._header_state()
-                        self.cloud_note.configure(text=m, fg=WIN)
+                        self.cloud_note.configure(
+                            text=self._signed_in_text(), fg=WIN)
                         self._cloud_sync(quiet=True)
                     self.after(0, done)
                     return
@@ -1182,12 +1297,15 @@ class App(tk.Tk):
             text="signed out on this computer - your matches stay here and "
                  "in your account", fg=MUTED)
 
-    def _cloud_sync(self, quiet=False):
+    def _cloud_sync(self, quiet=False, on_done=None):
+        """on_done(ok) is called on the main thread when the sync ends."""
         import cloud
         token = self.cfg.get("cloud_token")
         if not token:
             if not quiet:
                 self.cloud_note.configure(text="sign in first", fg=RED)
+            if on_done:
+                on_done(None)
             return
         if not quiet:
             self.cloud_note.configure(text="syncing\u2026", fg=MUTED)
@@ -1199,7 +1317,10 @@ class App(tk.Tk):
 
             def done():
                 if hasattr(self, "cloud_note"):
-                    self.cloud_note.configure(text=msg, fg=WIN if ok else RED)
+                    self.cloud_note.configure(text=self._hide_email_in(msg),
+                                              fg=WIN if ok else RED)
+                if on_done:
+                    on_done(ok)
                 if blocked:
                     # the server is refusing this build: find out what's
                     # current and put the prompt up
@@ -1424,9 +1545,50 @@ class App(tk.Tk):
             pass
         if touched:
             self.refresh(keep=True)
-            if self.cfg.get("cloud_auto_sync") and self.cfg.get("cloud_token"):
-                self._cloud_sync(quiet=True)
+            new = self._new_local_match()
+            syncing = bool(self.cfg.get("cloud_auto_sync")
+                           and self.cfg.get("cloud_token"))
+            if new is not None and self.toast and self.cfg.get("match_toast",
+                                                                True):
+                try:
+                    self.toast.show(new["result"],
+                                    new["opponent_archetype"],
+                                    new["turns"],
+                                    sync="syncing" if syncing else "local")
+                except Exception as e:
+                    self.log(f"pop-up failed: {e}")
+            if syncing:
+                self._cloud_sync(quiet=True, on_done=self._toast_synced
+                                 if new is not None else None)
         self.after(400, self._drain_log)
+
+    # ---- the "match recorded" pop-up
+    def _max_local_id(self):
+        rows = q("SELECT COALESCE(MAX(id), 0) AS m FROM matches")
+        return rows[0]["m"] if rows else 0
+
+    def _new_local_match(self):
+        """
+        The newest match this computer recorded since the last check, or
+        None. Only rows with a saved log file count: matches pulled down
+        from another computer by sync have none, and shouldn't pop up
+        as if they had just been played here. Ignored matches (nobody
+        attacked) don't pop up either.
+        """
+        rows = q(f"SELECT * FROM matches WHERE id > ? "
+                 f"AND COALESCE(raw_path,'') != '' ORDER BY id",
+                 (self._last_local_id,))
+        if not rows:
+            return None
+        self._last_local_id = max(r["id"] for r in rows)
+        counted = [r for r in rows
+                   if (_col(r, "excluded") or "") == ""]
+        return counted[-1] if counted else None
+
+    def _toast_synced(self, ok):
+        if self.toast:
+            self.toast.set_sync("synced" if ok else
+                                ("local" if ok is None else "failed"))
 
     def _problem(self, text):
         """

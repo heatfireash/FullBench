@@ -29,6 +29,8 @@ DEFAULTS = {
     "cloud_token": "",     # device token, never the password
     "cloud_email": "",
     "cloud_auto_sync": True,
+    "match_toast": True,   # pop-up when a match is recorded
+    "hide_email": False,   # show "signed in" instead of the address
 }
 
 

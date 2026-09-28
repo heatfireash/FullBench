@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.31.1"
+VERSION = "1.32.0"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,22 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.32.0", "2026-09-28", [
+        "A pop-up now confirms every match that's recorded: the result, "
+        "the opponent's deck, and whether it synced to fullbench.gg. It "
+        "sits in the bottom-right corner of the game window, away from "
+        "the Continue button, never takes focus from the game, and goes "
+        "away by itself after a few seconds (or click it). Turn it off in "
+        "Settings.",
+        "New setting: Hide my email address. Shows 'signed in' instead of "
+        "your email at the top of the app and in Settings -- for "
+        "streaming or screenshots.",
+        "Sharp taskbar icon. The window was handing Windows the 16px "
+        "version of the icon for everything, which the taskbar stretched "
+        "to 24px. It now sets the exact size the taskbar and title bar "
+        "draw at, for any display scaling, and the icon has a frame drawn "
+        "for each of those sizes.",
+    ]),
     ("1.31.1", "2026-09-26", [
         "Deck names follow one rule everywhere: the first name is the "
         "Pokemon that did the most damage; the second is whichever other "
@@ -28,6 +44,24 @@ CHANGELOG = [
         "Ethan's, Misty's -- looked like the same Pokemon, so none could "
         "be named beside another.",
         "Evolutions from Grand Tree and Rare Candy are counted now.",
+        "Games group into decks from the first game. The bar for a "
+        "Pokemon to count as a deck's main attacker was three games, "
+        "which is right at a few hundred games and meant nothing grouped "
+        "at all early on: two games of one deck showed as two decks, and "
+        "short games showed up as 'Metang' or 'Drilbur'. It now scales "
+        "with how many games there are, and small groups are named by "
+        "the same damage/ability rule as big ones.",
+        "A game recorded by the app before logs were kept, then pasted "
+        "on the website, was stored twice -- the website had no log to "
+        "compare it with. Games are now also matched on who won, who "
+        "lost, turns, how it ended and prizes when a stored copy has no "
+        "log, and the website clears out any duplicates already stored. "
+        "The app drops its extra copy on its next sync.",
+        "The website has an icon in the browser tab, on phone home "
+        "screens and in bookmarks -- it had none.",
+        "The app's own icon was only drawn at 16x16 and stretched "
+        "everywhere else, so it looked blurry on the desktop and "
+        "taskbar. It now carries every size from 16 to 256.",
         "Matches already recorded are re-read with the fix once, "
         "automatically, on the app's first start and on the website. "
         "Decks you renamed yourself keep your name.",

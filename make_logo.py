@@ -244,6 +244,40 @@ def social_header(W=1500, H=500):
     return img.convert("RGB")
 
 
+def web_icons(out):
+    """
+    The website's icons, written to `out` (server/static):
+
+      favicon.ico            16/32/48 -- the browser tab
+      apple-touch-icon.png   180, solid square -- iPhone home screen,
+                             which rounds the corners itself and would
+                             show transparent ones as black
+      icon-192.png, icon-512.png + site.webmanifest -- Android
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    small = [16, 32, 48]
+    fr = [icon_mark(s) for s in small]
+    fr[-1].save(out / "favicon.ico", format="ICO",
+                sizes=[(s, s) for s in small], append_images=fr[:-1])
+
+    def solid(S):
+        img = Image.new("RGBA", (S, S), BG + (255,))
+        img.alpha_composite(full_mark(S))
+        return img.convert("RGB")
+
+    solid(180).save(out / "apple-touch-icon.png")
+    for S in (192, 512):
+        solid(S).save(out / f"icon-{S}.png")
+    (out / "site.webmanifest").write_text(
+        '{"name": "Full Bench", "short_name": "Full Bench",\n'
+        ' "icons": [{"src": "/static/icon-192.png", "sizes": "192x192",'
+        ' "type": "image/png"},\n'
+        '           {"src": "/static/icon-512.png", "sizes": "512x512",'
+        ' "type": "image/png"}],\n'
+        ' "theme_color": "#1a2d68", "background_color": "#1a2d68",'
+        ' "display": "browser"}\n', encoding="utf-8")
+
+
 def main():
     full_mark(512).save(HERE / "logo.png")
     print("wrote logo.png (512)")
@@ -251,12 +285,20 @@ def main():
     full_mark(64).save(HERE / "logo_small.png")
     print("wrote logo_small.png (64)")
 
-    # Windows picks from these depending on context and display scaling:
-    # 16 for title bars, 24-32 for the taskbar at 100%, 40-64 at 150-200%.
-    sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
+    # Windows picks the frame that matches what it's drawing, and only
+    # scales -- blurrily -- when there isn't one. The taskbar draws at 24px
+    # times the display scale (24, 30, 36, 48 at 100/125/150/200%); title
+    # bars at 16 times the scale; the desktop and Alt-Tab at 32 or 48
+    # times it. Every one of those sizes has its own frame.
+    sizes = [16, 20, 24, 28, 30, 32, 36, 40, 42, 48, 56, 60, 64, 72, 80, 96,
+             128, 256]
     frames = [icon_mark(s) for s in sizes]
-    frames[0].save(HERE / "icon.ico", format="ICO",
-                   sizes=[(s, s) for s in sizes], append_images=frames[1:])
+    # Saved from the LARGEST frame: Pillow drops every requested size
+    # bigger than the image it saves from, so starting at 16 produced an
+    # icon.ico with nothing but 16x16 in it -- stretched and blurry on
+    # the desktop and taskbar. The smaller frames still go in as drawn.
+    frames[-1].save(HERE / "icon.ico", format="ICO",
+                    sizes=[(s, s) for s in sizes], append_images=frames[:-1])
     print("wrote icon.ico", sizes, "(drawn at native size, not downscaled)")
 
     # zoomed sheet so the small sizes can be eyeballed
@@ -271,6 +313,10 @@ def main():
         x += s * Z + 12
     sheet.save(HERE / "icon_preview.png")
     print("wrote icon_preview.png (8x zoom, check the small sizes)")
+
+    web_icons(HERE / "server" / "static")
+    print("wrote server/static: favicon.ico, apple-touch-icon.png, "
+          "icon-192/512.png, site.webmanifest")
 
     wordmark(160).save(HERE / "wordmark.png")
     print("wrote wordmark.png")
