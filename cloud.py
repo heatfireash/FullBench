@@ -28,6 +28,7 @@ import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 DB_PATH = Path.home() / "ptcgl_matches.db"
@@ -306,10 +307,34 @@ def _uploadable(conn):
     return {_col(r, "log_hash"): r for r in rows if _col(r, "log_hash")}
 
 
+def played_utc(captured_at):
+    """
+    When a match was played, in UTC.
+
+    captured_at is this PC's local clock with no time zone attached --
+    right for showing you your own games, but no good for putting
+    everyone's games in one order: someone in Europe would always look
+    hours newer than someone in the US. Converting here, where the PC's
+    time zone is known, gives the real moment. Even a PC with the wrong
+    time zone set gets it right, as long as its clock shows the right
+    time for that zone.
+    """
+    if not captured_at:
+        return None
+    try:
+        t = datetime.fromisoformat(str(captured_at))
+    except ValueError:
+        return None
+    # a time with no zone is this PC's local time; astimezone() applies
+    # the zone Windows is set to, including daylight saving on that date
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+
 def _match_payload(r):
     """One match as the server wants it. Reads and anonymises the log
     file, so it is only called for matches actually being uploaded."""
     m = {out: _col(r, local) for out, local in FIELDS.items()}
+    m["played_utc"] = played_utc(_col(r, "captured_at"))
     raw = _col(r, "raw_path")
     if raw:
         m["log_text"], m["match_fp"] = _log_payload(raw)

@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.32.0"
+VERSION = "1.32.1"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,13 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.32.1", "2026-09-28", [
+        "Matches now sync with the time they were played in UTC as well "
+        "as your local time, so fullbench.gg can list everyone's games in "
+        "the right order whatever time zone they're in. A PC with its "
+        "time zone set wrong no longer makes its games look hours newer "
+        "than they are.",
+    ]),
     ("1.32.0", "2026-09-28", [
         "A pop-up now confirms every match that's recorded: the result, "
         "the opponent's deck, and whether it synced to fullbench.gg. It "
