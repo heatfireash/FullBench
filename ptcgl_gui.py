@@ -3,7 +3,7 @@ Full Bench -- desktop GUI.
 
 Tabs:
   Dashboard  record and splits, filterable by which deck you played
-  Matches    every match, click one to see both decklists as seen
+  Matches    every match, click one to see the cards both players showed
   Decks      your decks and matchup breakdown
   Activity   live status of the two watchers
 
@@ -112,23 +112,6 @@ def execute(sql, args=()):
         c.close()
 
 
-def rename_deck(old, new, which="all", match_id=None):
-    """
-    Rename a deck. deck_edited=1 marks it as set by hand so --reparse
-    leaves it alone.
-    """
-    if which == "match" and match_id is not None:
-        return execute("UPDATE matches SET deck_label=?, deck_edited=1 "
-                       "WHERE id=?", (new, match_id))
-    return execute("UPDATE matches SET deck_label=?, deck_edited=1 "
-                   "WHERE deck_label IS ?", (new, old))
-
-
-def rename_opponent_archetype(old, new):
-    return execute("UPDATE matches SET opponent_archetype=? "
-                   "WHERE opponent_archetype IS ?", (new, old))
-
-
 def decks_used():
     rows = q(f"SELECT DISTINCT deck_label FROM matches "
              f"WHERE {NOT_EXCLUDED} AND deck_label IS NOT NULL "
@@ -141,35 +124,23 @@ def decks_used():
 NOT_EXCLUDED = "COALESCE(excluded,'') = ''"
 
 
-def match_rows(deck=None, version=None, include_excluded=False):
+def match_rows(deck=None, include_excluded=False):
     """
-    Matches, optionally narrowed to one deck and one list version.
+    Matches, optionally narrowed to one deck.
 
     Excluded matches are left out of every statistic but still listed in
     the Matches tab, so an ignored game is visible rather than vanished.
     """
     where = "1=1" if include_excluded else NOT_EXCLUDED
     if deck and deck != "All decks":
-        if version not in (None, "All versions"):
-            v = int(str(version).lstrip("v"))
-            return q(f"SELECT * FROM matches WHERE {where} AND "
-                     f"deck_label=? AND deck_version=?", (deck, v))
         return q(f"SELECT * FROM matches WHERE {where} AND deck_label = ?",
                  (deck,))
     return q(f"SELECT * FROM matches WHERE {where}")
 
 
-def versions_for(deck):
-    if not deck or deck == "All decks":
-        return []
-    return [r["version"] for r in
-            q("SELECT version FROM deck_versions WHERE deck_label=? "
-              "ORDER BY version", (deck,))]
-
-
-def stats(deck=None, version=None):
-    """Aggregate stats, optionally restricted to a deck and list version."""
-    rows = match_rows(deck, version)
+def stats(deck=None):
+    """Aggregate stats, optionally restricted to one deck."""
+    rows = match_rows(deck)
 
     d = {"n": len(rows), "w": 0, "l": 0, "first": [0, 0], "second": [0, 0],
          "turns": [], "prizediff": [], "recent": [],
@@ -474,21 +445,6 @@ class App(tk.Tk):
         self.deck_filter.pack(side="left")
         self.deck_filter.bind("<<ComboboxSelected>>",
                               lambda e: self.refresh(keep=True))
-        tk.Label(head, text="List", bg=SURFACE, fg=MUTED,
-                 font=("Segoe UI", 11)).pack(side="left", padx=(16, 8))
-        self.ver_filter = ttk.Combobox(head, state="readonly", width=13,
-                                       style="Big.TCombobox",
-                                       font=("Segoe UI", 13),
-                                       values=["All versions"])
-        self.ver_filter.set("All versions")
-        self.ver_filter.pack(side="left")
-        self.ver_filter.bind("<<ComboboxSelected>>",
-                             lambda e: self.refresh(keep=True))
-
-        ttk.Button(head, text="Paste decklist",
-                   command=self._paste_decklist).pack(side="right")
-        ttk.Button(head, text="View list",
-                   command=self._view_decklist).pack(side="right", padx=8)
 
         self.filter_note = tk.Label(head, text="", bg=SURFACE, fg=MUTED,
                                     font=("Segoe UI", 9))
@@ -546,8 +502,6 @@ class App(tk.Tk):
         self.mu_title = tk.Label(head2, text="MATCHUPS", bg=SURFACE, fg=MUTED,
                                  font=("Segoe UI", 8, "bold"))
         self.mu_title.pack(side="left")
-        ttk.Button(head2, text="Rename archetype",
-                   command=self._rename_arch_row).pack(side="right")
 
         self.mu_tree = ttk.Treeview(
             mid, columns=("name", "rec", "wr", "n"), show="headings",
@@ -584,21 +538,14 @@ class App(tk.Tk):
         self.tree.tag_configure("ignored", foreground=MUTED)
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self._show_detail)
-        self.tree.bind("<Double-1>", self._edit_from_tree)
+        self.tree.bind("<Double-1>", lambda e: self._view_log())
 
         btns = tk.Frame(left, bg=SURFACE)
         btns.pack(fill="x", pady=(6, 0))
         ttk.Button(btns, text="View battle log", style="Go.TButton",
                    command=self._view_log).pack(side="left", padx=(0, 8))
-        ttk.Button(btns, text="Rename deck for this match",
-                   command=lambda: self._edit_deck(scope="match")).pack(
-            side="left")
-        ttk.Button(btns, text="Rename everywhere",
-                   command=lambda: self._edit_deck(scope="all")).pack(
-            side="left", padx=8)
-        tk.Label(btns, text="double-click a row to rename",
-                 bg=SURFACE, fg=MUTED, font=("Segoe UI", 9)).pack(side="left",
-                                                                padx=8)
+        tk.Label(btns, text="or double-click a match",
+                 bg=SURFACE, fg=MUTED, font=("Segoe UI", 9)).pack(side="left")
         self._toast_lbl = tk.Label(left, text="", bg=SURFACE, fg=MUTED,
                                    font=("Segoe UI", 9), anchor="w")
         self._toast_lbl.pack(fill="x", pady=(4, 0))
@@ -861,244 +808,6 @@ class App(tk.Tk):
             msg = msg.replace(f" as {email}", "").replace(email, "")
         return msg
 
-    def _ask_name(self, title, prompt, initial):
-        """Small modal text prompt, themed to match the app."""
-        dlg = tk.Toplevel(self)
-        dlg.title(title)
-        dlg.configure(bg=SURFACE)
-        dlg.transient(self)
-        dlg.resizable(False, False)
-        tk.Label(dlg, text=prompt, bg=SURFACE, fg=TEXT,
-                 font=("Segoe UI", 10), wraplength=420,
-                 justify="left").pack(anchor="w", padx=16, pady=(16, 6))
-        var = tk.StringVar(value=initial or "")
-        ent = tk.Entry(dlg, textvariable=var, width=46, bg=PANEL, fg=TEXT,
-                       insertbackground=TEXT, relief="flat",
-                       font=("Segoe UI", 11))
-        ent.pack(padx=16, ipady=5)
-        ent.focus_set()
-        ent.select_range(0, "end")
-
-        out = {"v": None}
-
-        def close():
-            # release the grab before destroying: leaving it held means
-            # the NEXT modal never receives events and wait_window()
-            # blocks forever.
-            try:
-                dlg.grab_release()
-            except tk.TclError:
-                pass
-            dlg.destroy()
-
-        def ok(_e=None):
-            out["v"] = var.get().strip()
-            close()
-
-        row = tk.Frame(dlg, bg=SURFACE)
-        row.pack(fill="x", padx=16, pady=14)
-        ttk.Button(row, text="Save", style="Go.TButton",
-                   command=ok).pack(side="right")
-        ttk.Button(row, text="Cancel",
-                   command=close).pack(side="right", padx=8)
-        ent.bind("<Return>", ok)
-        dlg.bind("<Escape>", lambda e: close())
-        dlg.protocol("WM_DELETE_WINDOW", close)
-
-        dlg.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
-        y = self.winfo_rooty() + 160
-        dlg.geometry(f"+{x}+{y}")
-        dlg.grab_set()
-        self.wait_window(dlg)
-        return out["v"]
-
-    def _edit_from_tree(self, _evt):
-        self._edit_deck(scope="match")
-
-    def _edit_deck(self, scope="match"):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showinfo(APP_NAME, "Select a match first.")
-            return
-        mid = int(sel[0])
-        rows = q("SELECT deck_label FROM matches WHERE id=?", (mid,))
-        cur = rows[0]["deck_label"] if rows else ""
-        prompt = ("New name for the deck you played in this match:"
-                  if scope == "match" else
-                  f"Rename every match currently labelled "
-                  f"\"{cur or 'unknown'}\":")
-        new = self._ask_name("Rename deck", prompt, cur)
-        if not new or new == cur:
-            return
-        n = rename_deck(cur, new, which=scope, match_id=mid)
-        self.refresh(keep=True)
-        self.log(f"renamed deck -> {new} ({n} match{'es' if n != 1 else ''})")
-
-    def _rename_arch_row(self):
-        sel = self.mu_tree.selection()
-        if not sel:
-            messagebox.showinfo(APP_NAME, "Select an archetype first.")
-            return
-        cur = self.mu_tree.item(sel[0], "values")[0]
-        cur = None if cur == "unknown" else cur
-        new = self._ask_name("Rename archetype",
-                             f"Rename every opponent deck labelled "
-                             f"\"{cur or 'unknown'}\":", cur)
-        if new and new != cur:
-            n = rename_opponent_archetype(cur, new)
-            self.refresh(keep=True)
-            self.log(f"renamed archetype -> {new} ({n} matches)")
-
-    def _paste_decklist(self):
-        """
-        Read the decklist straight off the clipboard.
-
-        You already copied it in PTCGL, so asking you to paste it into
-        another box is a wasted step. Result is reported inline rather
-        than in a popup.
-        """
-        sel = self.deck_filter.get()
-        decks = decks_used()
-        if sel == "All decks":
-            if len(decks) == 1:
-                sel = decks[0]
-                self.deck_filter.set(sel)
-            elif not decks:
-                self._paste_note("No decks recorded yet - play a match "
-                                 "first.", RED)
-                return
-            else:
-                self._paste_note("Pick which deck this list belongs to "
-                                 "in the Deck box first.", RED)
-                return
-
-        try:
-            text = self.clipboard_get()
-        except tk.TclError:
-            text = ""
-        if not text.strip():
-            self._paste_note("Clipboard is empty - copy the list in PTCGL "
-                             "first.", RED)
-            return
-
-        import decklist as dl
-        if not dl.looks_like_decklist(text):
-            d = dl.parse_decklist(text)
-            if d["ok"]:
-                # it parsed, just short -- say so rather than claiming it
-                # isn't a decklist at all
-                self._paste_note(
-                    f"Only {d['total']} cards found - looks like a partial "
-                    f"list. Copy the whole deck in PTCGL.", RED)
-            else:
-                self._paste_note("That's not a decklist. In PTCGL open the "
-                                 "deck and choose Copy.", RED)
-            return
-
-        import sqlite3 as sq
-        import ptcgl_tracker
-        c = sq.connect(DB_PATH)
-        try:
-            ver, parsed, msg = ptcgl_tracker.add_deck_version(c, sel, text)
-        finally:
-            c.close()
-
-        if ver is None:
-            self._paste_note(msg, RED)
-            return
-        self.log(f"decklist for {sel}: {msg}")
-        self.refresh(keep=True)
-        if ver:
-            self.ver_filter.set(f"v{ver}")
-            self.refresh(keep=True)
-        # note last: refresh() rewrites this label, so setting it first
-        # would just be overwritten
-        extra = ""
-        if parsed["problems"]:
-            extra = "  (" + "; ".join(parsed["problems"][:2]) + ")"
-        self._paste_note(f"{sel}: {msg}, {parsed['total']} cards{extra}",
-                         RED if parsed["problems"] else WIN)
-
-    def _paste_note(self, text, colour=MUTED):
-        self.filter_note.configure(text=text, fg=colour)
-        # let the normal note come back after a few seconds
-        self.after(6000, lambda: self.refresh(keep=True))
-
-    def _view_decklist(self):
-        """Show the stored list, with a button to copy it back out."""
-        sel = self.deck_filter.get()
-        if sel == "All decks":
-            self._paste_note("Pick a deck first.", RED)
-            return
-        vers = versions_for(sel)
-        if not vers:
-            self._paste_note(f"No decklist saved for {sel} yet - "
-                             f"use Paste decklist.", RED)
-            return
-        selv = self.ver_filter.get()
-        v = vers[-1] if selv == "All versions" else int(selv.lstrip("v"))
-
-        import sqlite3 as sq
-        import ptcgl_tracker
-        import decklist as dl
-        c = sq.connect(DB_PATH)
-        try:
-            rec = ptcgl_tracker.deck_version_list(c, sel, v)
-        finally:
-            c.close()
-        if not rec:
-            self._paste_note("That version isn't stored.", RED)
-            return
-        list_text, cards_json, total, created = rec
-        parsed = dl.parse_decklist(list_text)
-
-        dlg = tk.Toplevel(self)
-        dlg.title(f"{sel} - v{v}")
-        dlg.configure(bg=SURFACE)
-
-        head = tk.Frame(dlg, bg=HEADER)
-        head.pack(fill="x")
-        tk.Label(head, text=f"{sel}   v{v}", bg=HEADER, fg=HEADER_FG,
-                 font=("Segoe UI Semibold", 13)).pack(anchor="w", padx=16,
-                                                      pady=(12, 0))
-        tk.Label(head,
-                 text=f"{total} cards \u2014 saved "
-                      f"{created[:16].replace('T', ' ')}",
-                 bg=HEADER, fg="#a9b6da",
-                 font=("Segoe UI", 9)).pack(anchor="w", padx=16, pady=(0, 12))
-        tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
-
-        body = tk.Text(dlg, width=46, height=30, bg="#ffffff", fg=TEXT,
-                       relief="flat", font=("Consolas", 10),
-                       padx=14, pady=12)
-        body.pack(fill="both", expand=True, padx=16, pady=(12, 4))
-        body.insert("1.0", dl.format_list(parsed))
-        body.configure(state="disabled")
-
-        note = tk.Label(dlg, text="", bg=SURFACE, fg=MUTED,
-                        font=("Segoe UI", 9))
-        note.pack(anchor="w", padx=16)
-
-        def copy_list():
-            """Put the original text back on the clipboard, exactly as
-            PTCGL produced it, so it can be pasted straight back in."""
-            self.clipboard_clear()
-            self.clipboard_append(list_text)
-            self.update()
-            note.configure(text="copied - paste it into PTCGL's deck "
-                                "import", fg=WIN)
-
-        row = tk.Frame(dlg, bg=SURFACE)
-        row.pack(fill="x", padx=16, pady=12)
-        ttk.Button(row, text="Close", command=dlg.destroy).pack(side="right")
-        ttk.Button(row, text="Copy list", style="Go.TButton",
-                   command=copy_list).pack(side="right", padx=8)
-
-        dlg.bind("<Escape>", lambda e: dlg.destroy())
-        dlg.bind("<Control-c>", lambda e: copy_list())
-        dlg.geometry(f"+{self.winfo_rootx()+160}+{self.winfo_rooty()+40}")
-
     def _build_about(self):
         wrap = self._scrollable(self.tab_about)
         wrap.configure(padx=8, pady=14)
@@ -1291,6 +1000,13 @@ class App(tk.Tk):
         self.cfg["cloud_token"] = ""
         self.cfg["cloud_email"] = ""
         self.settings_mod.save(self.cfg)
+        # Signed out, the app goes back to naming decks itself, from your
+        # own games -- all of them, so old and new games stay consistent.
+        try:
+            execute("UPDATE matches SET server_named=0 "
+                    "WHERE COALESCE(server_named,0)=1")
+        except Exception:
+            pass
         self._cloud_state()
         self._header_state()
         self.cloud_note.configure(
@@ -1342,7 +1058,6 @@ class App(tk.Tk):
         When an update changes how logs are read or decks are named, run
         every saved log through the new code once, so old matches get the
         corrected names too -- the same as --reparse, but automatic.
-        Decks you renamed by hand keep your name.
         """
         try:
             from ptcgl_parse import PARSER_VERSION
@@ -1551,6 +1266,7 @@ class App(tk.Tk):
             if new is not None and self.toast and self.cfg.get("match_toast",
                                                                 True):
                 try:
+                    self._toast_hash = new["log_hash"]
                     self.toast.show(new["result"],
                                     new["opponent_archetype"],
                                     new["turns"],
@@ -1586,9 +1302,21 @@ class App(tk.Tk):
         return counted[-1] if counted else None
 
     def _toast_synced(self, ok):
-        if self.toast:
-            self.toast.set_sync("synced" if ok else
-                                ("local" if ok is None else "failed"))
+        if not self.toast:
+            return
+        if ok:
+            # the sync may have brought fullbench.gg's name for the
+            # opponent's deck; show that one, not the app's first guess
+            h = getattr(self, "_toast_hash", None)
+            rows = q("SELECT opponent_archetype, turns FROM matches "
+                     "WHERE log_hash=?", (h,)) if h else []
+            if rows:
+                self.toast.set_opponent(rows[0]["opponent_archetype"],
+                                        rows[0]["turns"])
+        self.toast.set_sync("synced" if ok else
+                            ("local" if ok is None else "failed"))
+        if ok:
+            self.refresh(keep=True)          # new names in the table too
 
     def _problem(self, text):
         """
@@ -1695,16 +1423,7 @@ class App(tk.Tk):
 
         sel = self.deck_filter.get()
 
-        vers = versions_for(sel)
-        vlabels = ["All versions"] + [f"v{v}" for v in vers]
-        curv = self.ver_filter.get() if keep else "All versions"
-        self.ver_filter.configure(values=vlabels)
-        self.ver_filter.set(curv if curv in vlabels else "All versions")
-        self.ver_filter.configure(
-            state="readonly" if len(vlabels) > 1 else "disabled")
-        selv = self.ver_filter.get()
-
-        d = stats(sel, selv)
+        d = stats(sel)
         dec = d["w"] + d["l"]
 
         ignored = q("SELECT COUNT(*) AS n FROM matches WHERE "
@@ -1713,10 +1432,6 @@ class App(tk.Tk):
         note = f"{d['n']} match{'es' if d['n'] != 1 else ''}"
         if sel != "All decks":
             note += f" with {sel}"
-            if selv != "All versions":
-                note += f" on {selv}"
-            elif not vers:
-                note += "  (no decklist saved -- use Paste decklist)"
         if ignored:
             note += (f"   \u00b7 {ignored} ignored "
                      f"(no attacks made)")
@@ -1765,7 +1480,7 @@ class App(tk.Tk):
                 text=f"{a:.2f}" if a is not None else "--")
 
         self.tree.delete(*self.tree.get_children())
-        rows = sorted(match_rows(sel, selv, include_excluded=True),
+        rows = sorted(match_rows(sel, include_excluded=True),
                       key=lambda r: -r["id"])
         for r in rows:
             order = {1: "first", 0: "second"}.get(r["went_first"], "?")
@@ -1788,12 +1503,10 @@ class App(tk.Tk):
         mu_head = "MATCHUPS"
         if sel != "All decks":
             mu_head += f"  \u2014  {sel.upper()}"
-            if selv != "All versions":
-                mu_head += f"  ({selv})"
         self.mu_title.configure(text=mu_head)
         self.mu_tree.delete(*self.mu_tree.get_children())
         agg = defaultdict(lambda: [0, 0])
-        rows = [r for r in match_rows(sel, selv)
+        rows = [r for r in match_rows(sel)
                 if r["result"] in ("win", "loss")]
         rows = [{"k": r["opponent_archetype"], "result": r["result"]}
                 for r in rows]

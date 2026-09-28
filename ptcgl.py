@@ -4,7 +4,6 @@ Full Bench -- command-line entry point.
 Runs the clipboard watcher and the screen watcher in one process.
 
     py ptcgl.py                  run everything
-    py ptcgl.py --deck "Mega Excadrill"
     py ptcgl.py --no-autocopy    clipboard only (you copy manually)
     py ptcgl.py --calibrate      capture a screenshot for template cropping
     py ptcgl.py --stats          quick summary, then exit
@@ -26,8 +25,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--me", default=None,
                     help="your PTCGL name (auto-detected from logs if omitted)")
-    ap.add_argument("--deck", default=None,
-                    help="label for the deck you're playing this session")
     ap.add_argument("--no-autocopy", action="store_true",
                     help="don't drive the game window; only watch clipboard")
     ap.add_argument("--calibrate", action="store_true")
@@ -51,7 +48,7 @@ def main():
 
     t = threading.Thread(
         target=ptcgl_tracker.watch_clipboard,
-        kwargs=dict(me=args.me, deck=args.deck, stop=stop),
+        kwargs=dict(me=args.me, stop=stop),
         name="tracker", daemon=True)
     threads.append(t)
 
@@ -75,8 +72,7 @@ def main():
     for t in threads:
         t.start()
 
-    deck = f"  deck={args.deck!r}" if args.deck else "  (no deck label -- use --deck)"
-    print(f"\nrunning {len(threads)} watcher(s).{deck}")
+    print(f"\nrunning {len(threads)} watcher(s).")
     print("ctrl-c to stop.\n")
 
     try:

@@ -75,13 +75,13 @@ Tabs:
   record, win rate, going first / going second, mulligans, and the
   matchup breakdown for that deck. Win rates are green at 50% or above,
   red below
-- **Matches** — every game; click one to see both decklists as revealed
+- **Matches** — every game; click one to see the cards both players showed
 - **Settings** — startup and auto-tracking options
 - **Activity** — hidden unless **Developer mode** is ticked in Settings;
   a live log of what the watchers are doing
 
-From source instead: `py ptcgl_gui.py`, or `py ptcgl.py --deck "..."`
-for the command-line version.
+From source instead: `py ptcgl_gui.py`, or `py ptcgl.py` for the
+command-line version.
 
 After each match it will:
 
@@ -89,8 +89,8 @@ After each match it will:
 2. click BATTLE LOG, then the copy icon
 3. parse the log off the clipboard and file it
 
-The `--deck` label is how your own deck gets recorded. Change it when
-you switch decks. Opponent archetype is guessed from cards seen.
+Both decks, yours and your opponent's, are named from the cards played
+-- see "How decks get named" below.
 
 Clipboard-only mode (you copy the log yourself):
 
@@ -184,47 +184,15 @@ In the **Settings** tab:
 
 The Settings tab also shows whether the game is currently detected.
 
-## Decklists and versions
-
-**Paste decklist** on the Dashboard reads the list straight off your
-clipboard. In PTCGL open the deck and choose Copy, then click the button
-once — there is nothing to paste into. The result appears next to the
-deck picker.
-
-Paste an updated list later and it is saved as **v2**, then v3, and so
-on. An identical list does not create a new version.
-
-Every match records which version was current when it was played, so a
-list you paste today never rewrites results from last week. The first
-list you paste is applied to matches already recorded with that deck,
-since before then there was nothing else they could have been on.
-
-The **List** dropdown next to the deck picker then filters everything --
-record, win rate, going first/second, matchups and the match list -- to
-one version, which is how you tell whether a change actually helped.
-
-**View list** shows the stored list for whichever version is selected,
-with a **Copy list** button that puts it back on your clipboard exactly
-as PTCGL produced it — so you can paste it straight into the game's deck
-import.
-
-## Fixing a deck name
-
-Deck names are guesses. Four ways to correct one:
-
-- **Matches tab** — double-click a row, or select it and use *Rename deck
-  for this match* / *Rename everywhere*
-- **Dashboard** — select a row in the matchup list and use *Rename
-  archetype* to fix an opponent deck's name everywhere
-
-A name you set by hand is marked as edited and is never overwritten,
-including by `--reparse`.
-
 ## How decks get named
 
-Automatically, from what was played, and the same way in the app and on
-the website. The deck is its attacker: games are grouped by which
-Pokemon led the damage, then by overlap of the rest, and every group is
+Automatically, from what was played. While you're signed in, the names
+come from fullbench.gg, which groups every player's games together, and
+each sync brings them down to the app. Signed out, the app does the same
+grouping with just your own games.
+
+The deck is its attacker: games are grouped by which Pokemon led the
+damage, then by overlap of the rest, and every group is
 named after the Pokemon that does the attacking. A game where your main
 attacker never came out still lands under the right name once the group
 exists.
@@ -244,28 +212,14 @@ attacks with it stays separate.
 Nothing to type, nothing to maintain. New decks name themselves when a
 set drops.
 
+There is no renaming. One name per deck, worked out the same way for
+everyone, is what lets your stats line up with global stats.
+
 It is sometimes wrong. Two decks sharing an engine can merge; a deck
 that shows different Pokemon in different games can split. That shrinks
-as more games are recorded. To force a name, rename it in the Matches
-tab -- hand-set names are never overwritten.
-
-Pasting a decklist is optional. It gives you list versions to compare,
-and a match whose cards mostly come from a saved list is filed under
-that list's name and version rather than the automatic name. Copying a
-list in PTCGL imports it on its own.
+as more games are recorded.
 
     py ptcgl_stats.py --merge-decks     # re-run the naming by hand
-
-## Does PTCGL store your decks on disk?
-
-If it did, the app could read the deck you selected instead of matching
-against pasted lists. Run:
-
-    py find_decks.py
-
-It reports every file under the PTCGL folders that might hold deck data.
-Decks appear to live on their servers, but this is worth re-checking
-after a client update.
 
 ## Duplicate matches
 

@@ -22,7 +22,7 @@ ONEFILE = True          # set False for a faster-starting folder build
 
 REQUIRED = ["ptcgl_gui.py", "ptcgl_tracker.py", "ptcgl_parse.py", "overlay.py",
             "autocopy.py", "ptcgl_stats.py",
-            "settings.py", "game_watch.py", "version.py", "decklist.py",
+            "settings.py", "game_watch.py", "version.py",
             "cloud.py", "archetypes.py", "archetypes.json", "cluster.py",
             "battlelog_button.png", "copy_button.png", "continue_button.png",
             "icon.ico", "logo_small.png"]
@@ -93,7 +93,7 @@ def main():
         args += ["--add-data", f"{png}{sep}."]
     # our own modules, imported dynamically at runtime
     for mod in ("ptcgl_tracker", "ptcgl_parse", "autocopy", "ptcgl_stats",
-                "overlay", "settings", "game_watch", "version", "decklist",
+                "overlay", "settings", "game_watch", "version",
                 "cloud", "archetypes", "cluster"):
         args += ["--hidden-import", mod]
     for mod in ("pyperclip", "cv2", "numpy", "mss",

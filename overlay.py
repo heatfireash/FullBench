@@ -150,6 +150,7 @@ class MatchToast:
         word, colour = self._RESULT.get(result, ("Recorded", "#5b6683"))
         if self.win is None or not tk.Toplevel.winfo_exists(self.win):
             self._build()
+        self._turns = turns
         self.stripe.configure(bg=colour)
         self.dot.configure(fg=colour, text="✓" if result == "win"
                            else ("✕" if result == "loss" else "•"))
@@ -168,6 +169,17 @@ class MatchToast:
         _restore_foreground(fg)
         # only now does the label have a real width to fit the text to
         self.win.update_idletasks()
+        self.sub.configure(text=self._fit(self.sub, sub))
+
+    def set_opponent(self, opponent, turns=None):
+        """Swap in fullbench.gg's name for the opponent's deck once the
+        match has synced."""
+        if self.win is None or not tk.Toplevel.winfo_exists(self.win):
+            return
+        turns = turns or getattr(self, "_turns", None)
+        sub = f"vs {opponent}" if opponent else "opponent's deck unknown"
+        if turns:
+            sub += f" · {turns} turns"
         self.sub.configure(text=self._fit(self.sub, sub))
 
     def set_sync(self, state):

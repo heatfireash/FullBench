@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.32.1"
+VERSION = "1.33.0"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,21 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.33.0", "2026-09-28", [
+        "One name per deck, everywhere. While you're signed in, deck "
+        "names come from fullbench.gg, so the app, your dashboard and "
+        "global stats all call a deck the same thing. Each sync updates "
+        "the names in the app, for your decks and your opponents'.",
+        "The match pop-up switches to fullbench.gg's name for your "
+        "opponent's deck once the match has synced.",
+        "Removed deck versions and pasting decklists. A saved list could "
+        "pin a deck to the wrong name for good. Your old lists aren't "
+        "deleted, they're just no longer used.",
+        "Removed renaming decks. Every deck is named the same way for "
+        "everyone, which is what lets your stats line up with global "
+        "stats. Decks you renamed before are named automatically again. "
+        "Double-clicking a match now opens its battle log.",
+    ]),
     ("1.32.1", "2026-09-28", [
         "Matches now sync with the time they were played in UTC as well "
         "as your local time, so fullbench.gg can list everyone's games in "

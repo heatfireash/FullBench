@@ -218,7 +218,12 @@ def reparse(c):
             "UPDATE matches SET player=?, opponent=?, result=?, win_reason=?, "
             "went_first=?, turns=?, player_prizes_taken=?, "
             "opponent_prizes_taken=?, player_cards=?, opponent_cards=?, "
-            "opponent_archetype=?, deck_label=CASE WHEN deck_edited=1 THEN deck_label ELSE ? END, " 
+            # names from fullbench.gg survive a re-read; only the app's
+            # own guesses are redone
+            "opponent_archetype=CASE WHEN COALESCE(server_named,0)=1 "
+            "THEN opponent_archetype ELSE ? END, "
+            "deck_label=CASE WHEN COALESCE(server_named,0)=1 "
+            "THEN deck_label ELSE ? END, "
             "player_moves=?, opponent_moves=?, "
             "player_mulligans=?, opponent_mulligans=?, "
             "player_mulligan_draws=?, opponent_mulligan_draws=?, "

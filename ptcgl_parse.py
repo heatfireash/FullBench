@@ -385,8 +385,14 @@ def parse(text: str, me: str | None = None) -> dict:
                 owner = m.group("who").strip()
         if not stripped.startswith("\u2022"):
             continue
-        # only bullets that follow a card-related line
-        prev = lines[i - 1].strip().lower() if i else ""
+        # only bullets that follow a card-related line. Blank lines in
+        # between are skipped: with one there, "played them to the Bench"
+        # was never seen, and a Genesect ex played off a Precious Trolley
+        # never counted as being in the deck at all
+        j = i - 1
+        while j >= 0 and not lines[j].strip():
+            j -= 1
+        prev = lines[j].strip().lower() if j >= 0 else ""
         if not any(c in prev for c in REVEAL_CUES):
             continue
         if owner not in cards:
@@ -547,8 +553,17 @@ def guess_archetype(card_counts: dict, moves: dict = None,
     def premium(name):
         return 2 if " ex" in name else (1 if name.startswith("Mega ") else 0)
 
+    # Every Pokemon with evidence, not only the ones seen being played. A
+    # Pokemon that attacked is in the deck even if the log never showed
+    # it arriving -- it may have come off a search card whose list was
+    # missed. Leaving it out named a deck after its 60-damage Metagross
+    # while Genesect ex did the other 300.
+    candidates = dict(card_counts)
+    for name in list(moves) + list(damage) + list(evolutions):
+        candidates.setdefault(name, 0)
+
     scored = []
-    for name in card_counts:
+    for name in candidates:
         if not is_mon(name):
             continue
         dmg = damage.get(name, 0)

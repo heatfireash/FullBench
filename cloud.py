@@ -15,7 +15,7 @@ site, and receives a device token once you approve the computer there.
 The app never handles a password. Each computer gets its own token, so
 signing one out leaves the others alone.
 
-What is sent: match statistics, your own decklists, and each battle log
+What is sent: match statistics and each battle log
 with both player names replaced by PlayerA/PlayerB. The server re-reads
 the log to check the numbers, and keeps it so you can view your games on
 the website -- only your account can open them. Player names, yours and
@@ -44,7 +44,6 @@ FIELDS = {
     "log_hash": "log_hash",
     "played_at": "captured_at",
     "deck_label": "deck_label",
-    "deck_version": "deck_version",
     "opp_archetype": "opponent_archetype",
     "result": "result",
     "win_reason": "win_reason",
@@ -355,21 +354,7 @@ def _has_log_file(r):
         return False
 
 
-def _local_decks(conn):
-    decks = []
-    try:
-        for d in conn.execute(
-                "SELECT deck_label, version, created_at, list_text, total "
-                "FROM deck_versions").fetchall():
-            decks.append({"deck_label": d["deck_label"], "version": d["version"],
-                          "created_at": d["created_at"],
-                          "list_text": d["list_text"], "total": d["total"]})
-    except sqlite3.OperationalError:
-        pass
-    return decks
-
-
-def _insert_remote(conn, matches, decks):
+def _insert_remote(conn, matches):
     """Write back matches this machine has never seen."""
     added = 0
     for m in matches:
@@ -394,17 +379,6 @@ def _insert_remote(conn, matches, decks):
              m.get("opp_cards") if isinstance(m.get("opp_cards"), str)
              else json.dumps(m.get("opp_cards") or {})))
         added += 1
-
-    for d in decks:
-        try:
-            conn.execute(
-                "INSERT OR IGNORE INTO deck_versions (deck_label, version, "
-                "created_at, list_text, cards_json, total) "
-                "VALUES (?,?,?,?,?,?)",
-                (d["deck_label"], d["version"], d["created_at"],
-                 d["list_text"], None, d.get("total")))
-        except sqlite3.OperationalError:
-            break
     conn.commit()
     return added
 
@@ -436,6 +410,51 @@ def _adopt_aliases(conn, aliases):
         n += 1
     conn.commit()
     return n
+
+
+def _ensure_server_named(conn):
+    """The column that marks names from fullbench.gg, for a database made
+    before it existed."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(matches)")}
+    if "server_named" not in have:
+        conn.execute("ALTER TABLE matches ADD COLUMN server_named INTEGER")
+        conn.commit()
+
+
+def _apply_names(conn, names):
+    """
+    Use fullbench.gg's deck names for these matches, yours and your
+    opponents', so the app and the website call every deck the same
+    thing. They come from one grouping of every player's games, so they
+    are also what global stats calls the deck. Returns how many matches
+    changed name.
+    """
+    if not names:
+        return 0
+    _ensure_server_named(conn)
+    changed = 0
+    for h, pair in names.items():
+        mine, theirs = (list(pair) + [None, None])[:2]
+        r = conn.execute(
+            "SELECT deck_label, opponent_archetype, "
+            "COALESCE(server_named,0) AS s FROM matches WHERE log_hash=?",
+            (h,)).fetchone()
+        if not r:
+            continue
+        new_mine = mine or r["deck_label"]
+        new_theirs = theirs or r["opponent_archetype"]
+        if (new_mine, new_theirs) != (r["deck_label"],
+                                      r["opponent_archetype"]) or not r["s"]:
+            conn.execute(
+                "UPDATE matches SET deck_label=?, opponent_archetype=?, "
+                "server_named=1 WHERE log_hash=?",
+                (new_mine, new_theirs, h))
+            if (new_mine, new_theirs) != (r["deck_label"],
+                                          r["opponent_archetype"]):
+                changed += 1
+
+    conn.commit()
+    return changed
 
 
 # Uploads go in batches. The server takes at most 40 new matches an hour
@@ -530,7 +549,6 @@ def sync(base_url, token, db_path=None):
                         "WHERE log_hash IS NOT NULL")]
                 payload = {"matches": [_match_payload(local[h])
                                        for h in batch],
-                           "decks": _local_decks(conn) if last else [],
                            "have": held if last else [],
                            "pull": last}
                 try:
@@ -545,10 +563,16 @@ def sync(base_url, token, db_path=None):
             return False, str(e)
         update_required = None
 
-        pulled = _insert_remote(conn, res.get("matches", []),
-                                res.get("decks", []))
+        pulled = _insert_remote(conn, res.get("matches", []))
+        try:
+            renamed = _apply_names(conn, res.get("names"))
+        except sqlite3.Error:
+            renamed = 0                     # names are cosmetic; never fail a sync on them
         msg = (f"uploaded {added}, downloaded {pulled}, "
                f"{res.get('server_total', 0)} stored in your account")
+        if renamed:
+            msg += (f" - {renamed} deck name{'s' if renamed != 1 else ''} "
+                    f"updated to match fullbench.gg")
         if merged:
             msg += (f" - {merged} already in your account from the website "
                     f"or another PC, not added twice")
