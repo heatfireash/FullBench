@@ -18,9 +18,7 @@ on the result screen, so you don't have to remember.
 | `ptcgl_parse.py` | the battle log parser |
 | `autocopy.py` | watches the game window, clicks Battle Log → copy |
 | `ptcgl_stats.py` | reads the database: win rates, matchups, recent games |
-| `selftest.py` | checks the templates match your screen without clicking |
 | `build.py` | packages everything into a single .exe |
-| `make_logo.py` | regenerates `icon.ico` / `logo.png` |
 | `overlay.py` | the "don't press Continue" banner |
 | `settings.py` | settings file and Windows startup entry |
 | `game_watch.py` | detects whether PTCGL is running |
@@ -58,8 +56,8 @@ py ptcgl_gui.py
 ```
 
 The three `.png` templates were cropped from a 2560×1440 window. They
-should match other sizes too (tested 720p–4K). If `selftest.py` reports
-a low score, re-crop from a fresh `--calibrate` screenshot.
+should match other sizes too (tested 720p–4K). If clicks miss, re-crop
+from a fresh `--calibrate` screenshot.
 
 ## Run
 
@@ -139,10 +137,7 @@ saved logs. No match history is lost.
 
 **Nothing gets captured** — problems appear next to the app title
 whether or not Developer mode is on. Tick **Developer mode** in Settings
-to see the Activity tab and the full log. On a result screen you can also
-run `py selftest.py`.
-It prints match scores for each template and saves
-`~\ptcgl_selftest.png` with a red circle where it would click.
+to see the Activity tab and the full log.
 
 **Click lands in the wrong place** — usually Windows display scaling
 on a multi-monitor setup. The script sets DPI awareness; if that isn't
