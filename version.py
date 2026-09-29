@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.33.0"
+VERSION = "1.34.1"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,28 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.34.1", "2026-09-29", [
+        "Decks are no longer named after two stages of the same Pokémon, "
+        "like \"Garchomp ex / Gabite\". The app now knows which Pokémon "
+        "evolve into which, instead of guessing from how the names start, "
+        "which missed lines like Gible, Gabite and Garchomp or Dreepy, "
+        "Drakloak and Dragapult. Pokémon that evolve differently, like "
+        "Gardevoir and Gallade, can still share a deck name.",
+        "Matches already recorded are renamed the next time the app "
+        "starts.",
+        "New logo: an F made of three cards, with a yellow card across "
+        "the top. It's the app icon, the taskbar icon and the logo on "
+        "fullbench.gg.",
+    ]),
+    ("1.34.0", "2026-09-28", [
+        "Updates install from inside the app. Press Update now and Full "
+        "Bench downloads the new version, checks it's the right file, "
+        "and restarts itself. No more replacing the exe by hand, and no "
+        "Windows warning on updates -- that only shows the first time "
+        "you download it from the website.",
+        "If an update can't install that way, nothing on your PC changes "
+        "and you can still get it from the download page.",
+    ]),
     ("1.33.0", "2026-09-28", [
         "One name per deck, everywhere. While you're signed in, deck "
         "names come from fullbench.gg, so the app, your dashboard and "

@@ -76,6 +76,8 @@ so a missing package fails loudly instead of producing a broken exe.
 | `overlay.py` | the "don't press Continue yet" cover |
 | `cluster.py` | works out deck archetypes from cards actually played |
 | `cloud.py` | optional sync to a Full Bench server |
+| `updater.py` | installs updates from inside the app |
+| `evolutions.py` | which Pokémon evolve into which, for deck names |
 | `ptcgl_stats.py` | command-line stats, `--reparse`, `--unclassified` |
 
 Full docs on parsing, deck naming, duplicate detection and sync are in

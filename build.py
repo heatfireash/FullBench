@@ -24,6 +24,7 @@ REQUIRED = ["ptcgl_gui.py", "ptcgl_tracker.py", "ptcgl_parse.py", "overlay.py",
             "autocopy.py", "ptcgl_stats.py",
             "settings.py", "game_watch.py", "version.py",
             "cloud.py", "archetypes.py", "archetypes.json", "cluster.py",
+            "updater.py", "evolutions.py",
             "battlelog_button.png", "copy_button.png", "continue_button.png",
             "icon.ico", "logo_small.png"]
 
@@ -94,7 +95,7 @@ def main():
     # our own modules, imported dynamically at runtime
     for mod in ("ptcgl_tracker", "ptcgl_parse", "autocopy", "ptcgl_stats",
                 "overlay", "settings", "game_watch", "version",
-                "cloud", "archetypes", "cluster"):
+                "cloud", "archetypes", "cluster", "updater", "evolutions"):
         args += ["--hidden-import", mod]
     for mod in ("pyperclip", "cv2", "numpy", "mss",
                 "pygetwindow", "pydirectinput"):

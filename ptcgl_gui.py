@@ -212,6 +212,15 @@ class App(tk.Tk):
         self.settings_mod = settings_mod
         self.cfg = settings_mod.load()
 
+        # the exe the last update replaced, if this is its first start
+        try:
+            import updater
+            updater.cleanup_old()
+        except Exception:
+            pass
+        if "--updated" in sys.argv:
+            self.after(1500, lambda: self.log(f"updated to {VERSION}"))
+
         try:
             # Only the shield over Continue. The full-width banner used to
             # sit across the top of the screen, which is exactly where the
@@ -1160,34 +1169,120 @@ class App(tk.Tk):
                                             pady=(0, 12))
         tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
 
+        import updater
+        can, _why = updater.can_self_update()
+        can = can and bool(info.get("download_url") and info.get("sha256"))
+
         if info["must"]:
             text = ("Syncing is paused until you update. Your matches are "
                     "safe on this PC - they'll all upload once the new "
                     "version is running.\n\nTracking keeps working in the "
                     "meantime.")
         else:
-            text = ("A newer version is on the download page. Tracking and "
-                    "syncing keep working either way.")
-        text += ("\n\nTo update: download it, close Full Bench, and "
-                 "replace your old FullBench.exe with the new one. Your "
-                 "matches and settings are kept.")
-        tk.Label(dlg, text=text, bg=SURFACE, fg=TEXT, font=("Segoe UI", 10),
-                 wraplength=400, justify="left").pack(anchor="w", padx=18,
-                                                      pady=(14, 6))
+            text = ("A newer version is ready. Tracking and syncing keep "
+                    "working either way.")
+        if can:
+            text += ("\n\nUpdate now downloads it and restarts Full Bench "
+                     "- about a minute. Your matches and settings are kept.")
+        else:
+            text += ("\n\nTo update: download it, close Full Bench, and "
+                     "replace your old FullBench.exe with the new one. Your "
+                     "matches and settings are kept.")
+        msg = tk.Label(dlg, text=text, bg=SURFACE, fg=TEXT,
+                       font=("Segoe UI", 10), wraplength=400, justify="left")
+        msg.pack(anchor="w", padx=18, pady=(14, 6))
+        bar = ttk.Progressbar(dlg, mode="determinate", length=400,
+                              maximum=100)
 
-        def download():
+        def open_page():
             import webbrowser
             webbrowser.open(info["page"])
             dlg.destroy()
 
+        cancel = threading.Event()
         row = tk.Frame(dlg, bg=SURFACE)
-        row.pack(fill="x", padx=18, pady=(8, 16))
-        ttk.Button(row, text="Later", command=dlg.destroy).pack(side="right")
-        ttk.Button(row, text="Open download page", style="Go.TButton",
-                   command=download).pack(side="right", padx=8)
+        row.pack(fill="x", padx=18, pady=(8, 16), side="bottom")
 
-        dlg.bind("<Escape>", lambda e: dlg.destroy())
-        dlg.bind("<Return>", lambda e: download())
+        def later():
+            cancel.set()
+            dlg.destroy()
+
+        later_btn = ttk.Button(row, text="Later", command=later)
+        later_btn.pack(side="right")
+        page_btn = ttk.Button(row, text="Open download page",
+                              style="Go.TButton" if not can else "TButton",
+                              command=open_page)
+        page_btn.pack(side="right", padx=8)
+        go_btn = None
+
+        def update_now():
+            go_btn.state(["disabled"])
+            page_btn.state(["disabled"])
+            later_btn.configure(text="Cancel")
+            msg.configure(text="Downloading the new version\u2026")
+            bar.pack(anchor="w", padx=18, pady=(4, 4), before=row)
+
+            def progress(done, total):
+                def show():
+                    if not dlg.winfo_exists():
+                        return
+                    if total:
+                        bar["value"] = 100 * done / total
+                        msg.configure(text=f"Downloading the new version"
+                                           f"\u2026 {done / 1e6:.0f} of "
+                                           f"{total / 1e6:.0f} MB")
+                self.after(0, show)
+
+            def run():
+                try:
+                    path = updater.download(
+                        info["download_url"], info["sha256"],
+                        info.get("size"), info["latest"],
+                        progress=progress, cancel=cancel)
+                except updater.UpdateError as e:
+                    why = str(e)     # e is gone once the except block ends
+                    self.after(0, lambda: failed(why))
+                    return
+                self.after(0, lambda: install(path))
+
+            threading.Thread(target=run, daemon=True).start()
+
+        def install(path):
+            if cancel.is_set():
+                return
+            msg.configure(text="Restarting Full Bench\u2026")
+            later_btn.state(["disabled"])
+            self.update_idletasks()
+            try:
+                updater.install_and_restart(path)
+            except updater.UpdateError as e:
+                failed(str(e))
+                return
+            # the new version is starting; this one steps aside
+            if self.stop_evt:
+                self.stop_evt.set()
+            self.after(300, self.destroy)
+
+        def failed(why):
+            if not dlg.winfo_exists() or why == "cancelled":
+                return
+            bar.pack_forget()
+            msg.configure(text=f"The update didn't work: {why}.\n\n"
+                               f"You can still get it from the download "
+                               f"page. Nothing on this PC was changed.")
+            later_btn.configure(text="Close")
+            later_btn.state(["!disabled"])
+            page_btn.state(["!disabled"])
+            page_btn.configure(style="Go.TButton")
+
+        if can:
+            go_btn = ttk.Button(row, text="Update now", style="Go.TButton",
+                                command=update_now)
+            go_btn.pack(side="right")
+
+        dlg.bind("<Escape>", lambda e: later())
+        dlg.bind("<Return>", lambda e: update_now() if can else open_page())
+        dlg.protocol("WM_DELETE_WINDOW", later)
         if self.state() != "iconic":
             dlg.geometry(f"+{self.winfo_rootx()+120}+{self.winfo_rooty()+80}")
         dlg.lift()

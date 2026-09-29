@@ -92,7 +92,20 @@ def _main_attackers(items):
         if top:
             tops[top] += 1
     total = sum(tops.values()) or 1
-    return {m for m, n in tops.items() if n >= 3 and n / total >= 0.03}
+    # The bar scales with how much there is to go on. At a few hundred
+    # games, three is what separates a deck from a fluke. At a dozen, it
+    # means nothing ever qualifies, nothing groups, and every game stands
+    # alone under its own name -- two games of one deck show as two
+    # decks. So early on, leading the damage once is enough; a side
+    # attacker's odd game still joins the deck it overlaps (pass 1)
+    # rather than founding its own.
+    if total >= 150:
+        need, share = 3, 0.03
+    elif total >= 40:
+        need, share = 2, 0.0
+    else:
+        need, share = 1, 0.0
+    return {m for m, n in tops.items() if n >= need and n / total >= share}
 
 
 def _engines(items, mains):
@@ -321,11 +334,10 @@ def _name_cluster(c, n):
     players call it -- then the headline weighting, so "Charizard ex"
     wins over the Pidgeot that appears just as often.
     """
-    if n < MIN_GAMES:
-        ranked = sorted(c["counts"].items(),
-                        key=lambda kv: (-kv[1], -headline_score(kv[0]), kv[0]))
-        return ranked[0][0] if ranked else "unknown"
-
+    # No special case for small groups: a group of one or two games is
+    # named by the same rule as a group of a hundred. (It used to fall
+    # back to whichever card was seen most, which named decks after
+    # their Tarountula.)
     # The deck is named after what attacks. Damage share is the score;
     # how often the card was merely present only breaks ties. That is
     # what stops an engine Pokemon in every game from naming a deck it
@@ -385,9 +397,14 @@ def _species(name):
 
 
 def _same_line(a, b):
-    """Rough check for one Pokemon being another's stage."""
-    aw, bw = _species(a), _species(b)
-    return bool(aw) and aw[:4] == bw[:4]
+    """One Pokemon another's stage? The same check the per-game name
+    uses (ptcgl_parse.same_line), so both agree."""
+    try:
+        from ptcgl_parse import same_line
+        return same_line(a, b)
+    except ImportError:
+        aw, bw = _species(a), _species(b)
+        return bool(aw) and aw[:4] == bw[:4]
 
 
 def pokemon_from_parse(d, side):

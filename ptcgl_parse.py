@@ -495,7 +495,9 @@ def parse(text: str, me: str | None = None) -> dict:
 #   2 -- ability uses counted; Grand Tree / Rare Candy evolutions
 #        counted; trainer-owned names ("Team Rocket's") no longer look
 #        like one Pokemon; per-match names follow the damage/ability rule
-PARSER_VERSION = 2
+#   3 -- stages of one Pokemon recognised by evolution family, not by
+#        the start of the name: no more "Garchomp ex / Gabite"
+PARSER_VERSION = 3
 
 _OWNER_RE = re.compile(r"^[^'’]{1,24}['’]s\s+")
 
@@ -508,8 +510,24 @@ def _species(name):
 
 
 def same_line(a, b):
-    """Rough check for one Pokemon being another's stage (Metang and
-    Metagross), so a deck isn't named after two of its own stages."""
+    """
+    Is one Pokemon another's stage -- Gabite and Garchomp, Metang and
+    Metagross -- so a deck isn't named after two of its own stages?
+    Siblings aren't: Gardevoir and Gallade can both be in a deck's name.
+
+    Decided by real evolution data (evolutions.py). Only for a
+    Pokemon that table doesn't know, like one from a set newer than it,
+    does it fall back to comparing the start of the names. That fallback
+    alone used to decide it, and missed every line whose names don't
+    share a start: Gible/Gabite/Garchomp, Dreepy/Drakloak/Dragapult.
+    """
+    try:
+        import evolutions
+        known = evolutions.stages_of_one(a, b)
+        if known is not None:
+            return known
+    except ImportError:
+        pass
     aw, bw = _species(a), _species(b)
     return bool(aw) and aw[:4] == bw[:4]
 

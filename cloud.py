@@ -140,6 +140,11 @@ def check_version(base_url=None):
         "page": d.get("page") or f"{base_url}/download",
         "newer": vtuple(latest) > vtuple(APP_VERSION),
         "must": bool(need) and vtuple(APP_VERSION) < vtuple(need),
+        # what the app needs to update itself; missing from servers
+        # older than 1.34.0, in which case it opens the page instead
+        "download_url": d.get("download_url"),
+        "sha256": d.get("sha256"),
+        "size": d.get("size"),
     }
 
 
