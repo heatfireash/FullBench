@@ -235,6 +235,14 @@ class App(tk.Tk):
             self.toast = MatchToast(self)
         except Exception:
             self.toast = None
+        # "copy the log yourself" -- shown if the automatic copy misses;
+        # its Skip button ends the wait and uncovers Continue
+        self.skip_evt = threading.Event()
+        try:
+            from overlay import ExportPrompt
+            self.prompt = ExportPrompt(self, on_skip=self.skip_evt.set)
+        except Exception:
+            self.prompt = None
         # matches recorded before this point never get a pop-up
         self._last_local_id = self._max_local_id()
 
@@ -667,10 +675,12 @@ class App(tk.Tk):
              "Useful together with the option above."),
             ("block_continue",
              "Block the Continue button while the log is being saved",
-             "Puts a small cover over the Continue button for the "
-             "half-second the copy takes, so a fast click can't throw the "
-             "match away. Click it or press Escape to dismiss it early; "
-             "it also clears itself after four seconds no matter what."),
+             "Puts a small cover over the Continue button while the log "
+             "is copied, so a stray click can't throw the match away. If "
+             "the copy misses, it tries again, then asks you to click "
+             "Battle Log and the copy icon yourself. The cover stays for "
+             "up to 20 seconds while you do; Skip on the pop-up removes "
+             "it straight away."),
             ("match_toast",
              "Show a pop-up when a match is recorded",
              "A small notice in the corner of the game window with the "
@@ -852,7 +862,9 @@ class App(tk.Tk):
         inner = tk.Frame(wrap, bg=SURFACE)
         inner.pack(fill="both", expand=True, pady=(6, 0))
 
-        for ver, date, notes in CHANGELOG:
+        # the last five releases; the full history stays in version.py
+        # and on GitHub
+        for ver, date, notes in CHANGELOG[:5]:
             row = tk.Frame(inner, bg=SURFACE)
             row.pack(fill="x", anchor="w", pady=(10, 2))
             tk.Label(row, text=ver, bg=SURFACE, fg=HEADER,
@@ -863,6 +875,14 @@ class App(tk.Tk):
                 tk.Label(inner, text="\u2022  " + n, bg=SURFACE, fg=MUTED,
                          font=("Segoe UI", 9), wraplength=740,
                          justify="left").pack(anchor="w", padx=10, pady=1)
+        if len(CHANGELOG) > 5:
+            older = tk.Label(inner, text="Older versions: see the releases "
+                             "on GitHub", bg=SURFACE, fg=HEADER,
+                             font=("Segoe UI", 9, "underline"),
+                             cursor="hand2")
+            older.pack(anchor="w", pady=(10, 0))
+            older.bind("<Button-1>", lambda e: __import__("webbrowser").open(
+                "https://github.com/heatfireash/FullBench/releases"))
 
         tk.Label(wrap, text="Not produced by, endorsed by, or affiliated "
                             "with Pokemon, Nintendo, Game Freak or Creatures.",
@@ -1358,6 +1378,8 @@ class App(tk.Tk):
             new = self._new_local_match()
             syncing = bool(self.cfg.get("cloud_auto_sync")
                            and self.cfg.get("cloud_token"))
+            if new is not None and self.prompt:
+                self.prompt.hide()          # the match pop-up takes its place
             if new is not None and self.toast and self.cfg.get("match_toast",
                                                                 True):
                 try:
@@ -1480,17 +1502,31 @@ class App(tk.Tk):
             """Progress from the capture thread, shown on the title bar."""
             if text is None or text == "captured":
                 self.after(0, lambda: self._set_status_line())
+            elif text == "copy the battle log":
+                self.after(0, lambda: self.status.configure(
+                    text="\u25cf copy the battle log to save this match",
+                    fg="#ff8a80"))
             else:
                 self.after(0, lambda: self.status.configure(
                     text="\u25cf saving battle log\u2026", fg="#ffd76a"))
 
-        def shield(rect):
+        def shield(rect, hold_s=None):
             if not self.shield or not self.cfg.get("block_continue", True):
                 return
             if rect is None:
                 self.shield.hide()
             else:
-                self.shield.show(rect)
+                self.shield.show(rect, hold_s)
+
+        def prompt(state, seconds=None):
+            if not self.prompt:
+                return
+            if state == "waiting":
+                self.prompt.waiting(seconds)
+            elif state == "missed":
+                self.prompt.missed()
+            else:
+                self.prompt.saved()
 
         try:
             import autocopy
@@ -1498,7 +1534,9 @@ class App(tk.Tk):
             threading.Thread(target=wrap(
                 lambda: autocopy.watch_screen(stop=self.stop_evt,
                                               on_status=status,
-                                              on_shield=shield),
+                                              on_shield=shield,
+                                              on_prompt=prompt,
+                                              skip=self.skip_evt),
                 "autocopy"), daemon=True).start()
             self.log("screen watcher started.")
         except FileNotFoundError as e:

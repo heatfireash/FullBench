@@ -36,12 +36,18 @@ class ClickShield:
     second. It does not touch the game, read it, or send it anything.
 
     A shield that got stuck would be worse than the problem it solves,
-    so it has three independent ways out: the capture code hides it when
-    finished, a watchdog kills it after MAX_MS regardless, and clicking
-    or pressing Escape dismisses it immediately.
+    so it always has a way out: the capture code hides it when finished,
+    and a watchdog takes it down after its time regardless -- a few
+    seconds normally, or the length of the wait while the player copies
+    the log by hand (when the pop-up also has a Skip button). Escape
+    dismisses it too.
+
+    Clicking it does NOT take it down. It used to, and that was the
+    hole: someone clicking about on the result screen could knock the
+    shield away with one click and press Continue with the next.
     """
 
-    MAX_MS = 4000          # hard ceiling, whatever else happens
+    MAX_MS = 6000          # ceiling for one automatic copy attempt
 
     def __init__(self, root):
         self.root = root
@@ -51,8 +57,10 @@ class ClickShield:
         self._pump()
 
     # --- any thread
-    def show(self, rect):
-        self.q.put(("show", rect))
+    def show(self, rect, hold_s=None):
+        """Cover rect. hold_s: stay up this long (the manual-copy wait)
+        instead of the usual few seconds."""
+        self.q.put(("show", (rect, hold_s)))
 
     def hide(self):
         self.q.put(("hide", None))
@@ -70,7 +78,8 @@ class ClickShield:
             pass
         self.root.after(80, self._pump)
 
-    def _show(self, rect):
+    def _show(self, arg):
+        rect, hold_s = arg
         x, y, w, h = rect
         if w <= 0 or h <= 0:
             return
@@ -87,10 +96,13 @@ class ClickShield:
             self.lbl = tk.Label(f, text="saving battle log\u2026", bg=RED,
                                 fg=WHITE, font=("Segoe UI Semibold", 13))
             self.lbl.pack(expand=True)
-            # clicking the shield dismisses it: never trap the user
+            # a click only says why it's there; it never takes it down
             for w_ in (self.win, f, self.lbl):
-                w_.bind("<Button-1>", lambda e: self._hide())
+                w_.bind("<Button-1>", lambda e: self._nudge())
             self.win.bind("<Escape>", lambda e: self._hide())
+        self._text = ("copy the battle log first" if hold_s
+                      else "saving battle log\u2026")
+        self.lbl.configure(text=self._text)
         self.win.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
         self.win.deiconify()
         self.win.lift()
@@ -101,7 +113,17 @@ class ClickShield:
                 self.root.after_cancel(self._watchdog)
             except Exception:
                 pass
-        self._watchdog = self.root.after(self.MAX_MS, self._hide)
+        limit = int(hold_s * 1000) if hold_s else self.MAX_MS
+        self._watchdog = self.root.after(limit, self._hide)
+
+    def _nudge(self):
+        """Clicked: say so, briefly, then go back to the usual text."""
+        try:
+            self.lbl.configure(text="not yet \u2014 saving the log")
+            self.root.after(900, lambda: self.lbl.configure(
+                text=getattr(self, "_text", "saving battle log\u2026")))
+        except tk.TclError:
+            pass
 
     def _hide(self):
         if self._watchdog:
@@ -110,6 +132,159 @@ class ClickShield:
             except Exception:
                 pass
             self._watchdog = None
+        if self.win is not None and tk.Toplevel.winfo_exists(self.win):
+            self.win.withdraw()
+
+
+class ExportPrompt:
+    """
+    "Battle log not saved yet" -- shown when the automatic copy missed
+    twice, asking the player to click Battle Log and the copy icon
+    themselves while Continue stays covered.
+
+    Sits where the match pop-up does, bottom right of the game window,
+    clear of the Battle Log button, the copy icon and Continue. Counts
+    down the wait, and has a Skip button that uncovers Continue straight
+    away. Clicking anywhere else on it does nothing, so a stray click
+    can't skip by accident.
+
+    Worker threads call waiting()/saved()/missed() from anywhere; like
+    the shield, it runs on the Tk main thread through a queue. It never
+    takes focus from the game.
+    """
+
+    W, H = 400, 80
+    MISSED_MS = 7000       # how long "not saved" stays up
+
+    def __init__(self, root, on_skip=None):
+        self.root = root
+        self.on_skip = on_skip
+        self.q = queue.Queue()
+        self.win = None
+        self._tick = None
+        self._left = 0
+        self._pump()
+
+    # --- any thread
+    def waiting(self, seconds):
+        self.q.put(("waiting", seconds))
+
+    def saved(self):
+        self.q.put(("hide", None))
+
+    def missed(self):
+        self.q.put(("missed", None))
+
+    def hide(self):
+        self.q.put(("hide", None))
+
+    # --- main thread
+    def _pump(self):
+        try:
+            while True:
+                kind, arg = self.q.get_nowait()
+                if kind == "waiting":
+                    self._waiting(arg)
+                elif kind == "missed":
+                    self._missed()
+                else:
+                    self._hide()
+        except queue.Empty:
+            pass
+        self.root.after(80, self._pump)
+
+    def _build(self):
+        w = tk.Toplevel(self.root)
+        w.withdraw()
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        w.configure(bg="#dbe2ee")
+        card = tk.Frame(w, bg=WHITE)
+        card.pack(fill="both", expand=True, padx=1, pady=1)
+        tk.Frame(card, bg=RED, width=5).pack(side="left", fill="y")
+        self.dot = tk.Label(card, text="!", bg=WHITE, fg=RED,
+                            font=("Segoe UI Semibold", 18))
+        self.dot.pack(side="left", padx=(12, 8))
+        right = tk.Frame(card, bg=WHITE)
+        right.pack(side="right", fill="y", padx=(6, 12))
+        self.count = tk.Label(right, bg=WHITE, fg="#5b6683",
+                              font=("Segoe UI", 8, "bold"))
+        self.count.pack(anchor="e", pady=(10, 2))
+        self.skip = tk.Label(right, text="Skip", bg="#f1f4fa", fg=BLACK,
+                             font=("Segoe UI Semibold", 9), padx=10, pady=2,
+                             cursor="hand2")
+        self.skip.pack(anchor="e")
+        self.skip.bind("<Button-1>", lambda e: self._skip())
+        text = tk.Frame(card, bg=WHITE)
+        text.pack(side="left", fill="both", expand=True, pady=9)
+        self.title = tk.Label(text, bg=WHITE, fg=BLACK, anchor="w",
+                              font=("Segoe UI Semibold", 11))
+        self.title.pack(fill="x")
+        # wraps inside the space left of the countdown, not under it
+        self.sub = tk.Label(text, bg=WHITE, fg="#5b6683", anchor="w",
+                            justify="left", wraplength=215,
+                            font=("Segoe UI", 9))
+        self.sub.pack(fill="x")
+        w.update_idletasks()
+        _no_activate(w)
+        self.win = w
+
+    def _open(self):
+        if self.win is None or not tk.Toplevel.winfo_exists(self.win):
+            self._build()
+        x, y = _corner(self.root, self.W, self.H)
+        self.win.geometry(f"{self.W}x{self.H}+{int(x)}+{int(y)}")
+        fg = _foreground()
+        self.win.deiconify()
+        self.win.attributes("-topmost", True)
+        self.win.update_idletasks()
+        _no_activate(self.win)
+        _restore_foreground(fg)
+
+    def _waiting(self, seconds):
+        self._open()
+        self.title.configure(text="Battle log not saved yet")
+        self.sub.configure(text="Click BATTLE LOG, then the copy icon "
+                                "in the log.")
+        self.skip.pack(anchor="e")
+        self._left = int(seconds)
+        self._stop_tick()
+        self._countdown()
+
+    def _countdown(self):
+        if self._left <= 0:
+            return
+        self.count.configure(text=f"CONTINUE IN {self._left}s")
+        self._left -= 1
+        self._tick = self.root.after(1000, self._countdown)
+
+    def _missed(self):
+        self._stop_tick()
+        self._open()
+        self.title.configure(text="Battle log not saved")
+        self.sub.configure(text="This match wasn't recorded.")
+        self.count.configure(text="")
+        self.skip.pack_forget()
+        self._tick = self.root.after(self.MISSED_MS, self._hide)
+
+    def _skip(self):
+        self._stop_tick()
+        if self.on_skip:
+            try:
+                self.on_skip()
+            except Exception:
+                pass
+
+    def _stop_tick(self):
+        if self._tick:
+            try:
+                self.root.after_cancel(self._tick)
+            except Exception:
+                pass
+            self._tick = None
+
+    def _hide(self):
+        self._stop_tick()
         if self.win is not None and tk.Toplevel.winfo_exists(self.win):
             self.win.withdraw()
 
@@ -258,20 +433,23 @@ class MatchToast:
         self.win = w
 
     def _place(self):
-        """Bottom-right of the game window, else of the screen."""
-        x = y = None
-        try:
-            import game_watch
-            g = game_watch.game_window(require_visible=True)
-            if g and g.width > self.W + 60 and g.height > self.H + 60:
-                x = g.left + g.width - self.W - 24
-                y = g.top + g.height - self.H - 24
-        except Exception:
-            pass
-        if x is None:
-            right, bottom = _work_area(self.root)
-            x, y = right - self.W - 16, bottom - self.H - 16
+        x, y = _corner(self.root, self.W, self.H)
         self.win.geometry(f"{self.W}x{self.H}+{int(x)}+{int(y)}")
+
+
+def _corner(root, W, H):
+    """Top-left for a W x H card at the bottom right of the game window,
+    else of the screen -- clear of Continue (bottom centre), the Battle
+    Log button just above it, and the log's copy icon (upper right)."""
+    try:
+        import game_watch
+        g = game_watch.game_window(require_visible=True)
+        if g and g.width > W + 60 and g.height > H + 60:
+            return g.left + g.width - W - 24, g.top + g.height - H - 24
+    except Exception:
+        pass
+    right, bottom = _work_area(root)
+    return right - W - 16, bottom - H - 16
 
 
 # --- Windows helpers; every one is a harmless no-op elsewhere -----------

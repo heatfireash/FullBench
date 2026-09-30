@@ -23,9 +23,22 @@ import unicodedata
 AP = "['\u2019]"          # straight or curly apostrophe
 
 
+# Some cards come through with the game's internal card code in front:
+# "(mebsp_33) Mega Lucario ex", "(me1_75) Solrock", "(sv6-5_84)
+# Fezandipiti ex", "(me1_73_ph) Hariyama", "(sv8-5_36_mph) Dusclops" -- it
+# looks like the game does this when a deck has two printings of the same
+# card. The code isn't part of the name, and left
+# in, it made "(mebsp_33) Mega Lucario ex" a different deck from "Mega
+# Lucario ex", with no sprite.
+_CARD_CODE_RE = re.compile(
+    r"\([a-z0-9]+(?:-[a-z0-9]+)*_\d+[a-z]?(?:_[a-z0-9]+)*\)\s*", re.I)
+
+
 def _norm(text: str) -> str:
-    """Normalise unicode but keep the original apostrophe distinction."""
-    return unicodedata.normalize("NFC", text.replace("\r\n", "\n"))
+    """Normalise unicode but keep the original apostrophe distinction,
+    and drop the game's card codes from in front of card names."""
+    t = unicodedata.normalize("NFC", text.replace("\r\n", "\n"))
+    return _CARD_CODE_RE.sub("", t)
 
 
 # ------------------------------------------------------------ structure
@@ -497,7 +510,10 @@ def parse(text: str, me: str | None = None) -> dict:
 #        like one Pokemon; per-match names follow the damage/ability rule
 #   3 -- stages of one Pokemon recognised by evolution family, not by
 #        the start of the name: no more "Garchomp ex / Gabite"
-PARSER_VERSION = 3
+#   4 -- the game's card codes dropped from names: "(mebsp_33) Mega
+#        Lucario ex" is read as "Mega Lucario ex"
+#   5 -- and the longer codes too: "(me1_73_ph) Hariyama"
+PARSER_VERSION = 5
 
 _OWNER_RE = re.compile(r"^[^'’]{1,24}['’]s\s+")
 

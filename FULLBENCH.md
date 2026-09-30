@@ -19,7 +19,7 @@ on the result screen, so you don't have to remember.
 | `autocopy.py` | watches the game window, clicks Battle Log → copy |
 | `ptcgl_stats.py` | reads the database: win rates, matchups, recent games |
 | `build.py` | packages everything into a single .exe |
-| `overlay.py` | the "don't press Continue" banner |
+| `overlay.py` | the cover over Continue, and the pop-ups |
 | `settings.py` | settings file and Windows startup entry |
 | `game_watch.py` | detects whether PTCGL is running |
 | `battlelog_button.png` | template: the BATTLE LOG button |
@@ -143,20 +143,21 @@ to see the Activity tab and the full log.
 on a multi-monitor setup. The script sets DPI awareness; if that isn't
 enough, set both monitors to the same scaling as a test.
 
-**A match wasn't captured** — you pressed Continue before the copy
-finished. Capture takes roughly 0.6s from the result screen appearing;
-a red bar reading DON'T PRESS CONTINUE covers the top of the screen the
-whole time and turns green when the log is safely captured, and the
-Continue button itself is covered so the click can't land early.
+**A match wasn't captured** — the battle log was closed, or Continue
+pressed, before the copy finished. When a match ends, the app covers the
+Continue button with a small red box and copies the log, which takes
+about a second. If the copy misses (usually because a click closed the
+battle log first), it tries once more. If that misses too, a pop-up in
+the bottom-right corner asks you to click BATTLE LOG and then the copy
+icon yourself. Continue stays covered for up to 20 seconds while you do,
+and Skip on the pop-up uncovers it straight away. Clicking the red box
+doesn't remove it — that used to be how a quick second click lost the
+match — but Escape does.
 
 The cover is a small window over your own screen; it never touches the
-game. It clears when the copy finishes, after four seconds regardless,
-or if you click it or press Escape — and it can be switched off under
-Settings. PTCGL discards the battle log at that point and there is no
-way to recover it, so that game is simply lost. The app now shows a red
-**"match over - capturing"** banner at the top of the screen the moment
-a match ends; wait for it to turn green (about a second) before pressing
-Continue. Misses are counted next to the status dot.
+game, and it can be switched off under Settings. Once Continue is
+pressed, PTCGL discards the battle log and there's no way to recover
+it, so that game is lost. Misses are counted next to the status dot.
 
 **It fires during a game** — it shouldn't: clicking requires the
 CONTINUE button to be on screen. If it ever does, stop it and report

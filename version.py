@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.34.1"
+VERSION = "1.35.0"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,20 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.35.0", "2026-09-29", [
+        "A missed copy gets a second chance. If a click closes the battle "
+        "log before the app can copy it, it tries again straight away. If "
+        "that misses too, a pop-up asks you to click Battle Log and then "
+        "the copy icon yourself, and Continue stays covered for up to 20 "
+        "seconds while you do. Skip on the pop-up uncovers it right away.",
+        "Clicking the red box over Continue no longer removes it. One "
+        "click could knock it away and the next could land on Continue, "
+        "and the match was gone.",
+        "Card names no longer carry the game's internal codes, like "
+        "\"(mebsp_33) Mega Lucario ex\". They made the same card look like "
+        "two different ones, which split decks and lost their sprites. "
+        "Matches already recorded are fixed the next time the app starts.",
+    ]),
     ("1.34.1", "2026-09-29", [
         "Decks are no longer named after two stages of the same Pokémon, "
         "like \"Garchomp ex / Gabite\". The app now knows which Pokémon "

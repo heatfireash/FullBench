@@ -121,6 +121,11 @@ def shield_rect(win):
             int(win.height * (y1 - y0)))
 PANEL_TIMEOUT_S = 2.5    # max wait for the battle log panel to render
 CLIPBOARD_TIMEOUT_S = 2.0  # max wait for the copy to land
+# If the automatic copy misses twice -- usually a stray click closed the
+# battle log before the copy icon could be clicked -- Continue stays
+# covered this long while the player copies the log by hand. After that
+# it's uncovered anyway, so the game is never held up for long.
+MANUAL_WAIT_S = 20
 
 # --- scale search -------------------------------------------------------
 # Full sweep spans 0.35x to 2.0x, which covers a template cropped at 4K
@@ -282,8 +287,15 @@ def _clipboard():
         return None
 
 
+def _is_new_log(cur, before):
+    """A battle log that wasn't on the clipboard when the capture began
+    (or is the same text, but plainly a log)."""
+    return bool(cur) and "Setup" in cur[:400] and (
+        cur != before or "\'s Turn" in cur)
+
+
 def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
-            on_status=None):
+            on_status=None, before=None):
     """
     Click Battle Log, then the copy icon, as fast as the UI allows.
 
@@ -293,19 +305,24 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
     it appears; and instead of assuming the copy worked, watch the
     clipboard for a battle log to show up.
 
+    btn_xy None: the battle log is already open, so only the copy icon
+    is clicked.
+
     Returns True if a battle log reached the clipboard.
     """
     t_start = time.time()
-    before = _clipboard()
+    if before is None:
+        before = _clipboard()
 
     try:
         win.activate()
     except Exception:
         pass
 
-    _click(win, btn_xy)
-    if on_status:
-        on_status("opening battle log")
+    if btn_xy is not None:
+        _click(win, btn_xy)
+        if on_status:
+            on_status("opening battle log")
 
     # poll for the copy button rather than sleeping blindly
     clicked = False
@@ -327,18 +344,19 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
                 break
             time.sleep(0.08)
 
-    if not clicked:
+    if not clicked and btn_xy is not None:
         # fallback: select-all in the log body
         _click(win, (win.width // 2, win.height // 2))
         pydirectinput.keyDown("ctrl"); pydirectinput.press("a"); pydirectinput.keyUp("ctrl")
         pydirectinput.keyDown("ctrl"); pydirectinput.press("c"); pydirectinput.keyUp("ctrl")
+    if not clicked and btn_xy is None:
+        return False, None
 
     # confirm: wait for the clipboard to actually change to a log
     deadline = time.time() + CLIPBOARD_TIMEOUT_S
     while time.time() < deadline:
         cur = _clipboard()
-        if cur and "Setup" in cur[:400] and (cur != before or
-                                             "\'s Turn" in cur):
+        if _is_new_log(cur, before):
             print(f"[autocopy]   captured in {time.time()-t_start:.1f}s")
             return True, cur
         time.sleep(0.06)
@@ -346,6 +364,54 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
     print(f"[autocopy]   copy not confirmed after "
           f"{time.time()-t_start:.1f}s")
     return False, None
+
+
+def retry_copy(win, template, copy_template, expected, on_status, before):
+    """
+    One more go after a missed copy, while Continue is still covered.
+
+    The usual cause is a click from the player closing the battle log
+    before the copy icon could be clicked. Which state it was left in
+    decides the move: if the log is open, click just the copy icon (the
+    Battle Log button again would close it); if it's closed and the
+    Battle Log button is showing, do the whole thing again.
+    """
+    try:
+        frame = grab(win)
+    except Exception:
+        return False, None
+    if copy_template is not None:
+        cxy, _ = locate(frame, copy_template, expected,
+                        threshold=COPY_MATCH_THRESHOLD, region=COPY_REGION)
+        if cxy:
+            return do_copy(win, None, copy_template, expected, on_status,
+                           before)
+    xy, _ = locate(frame, template, expected_scale=expected,
+                   region=BUTTON_REGION)
+    if xy:
+        return do_copy(win, xy, copy_template, expected, on_status, before)
+    return False, None
+
+
+def wait_for_manual_copy(before, seconds, stop=None, skip=None):
+    """
+    Watch the clipboard while the player copies the log themselves.
+
+    Returns (captured, text, why) -- why is "saved", "skipped",
+    "stopped" or "timeout". The result screen being out of sight isn't
+    a reason to stop: opening the battle log hides it too.
+    """
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if stop is not None and stop.is_set():
+            return False, None, "stopped"
+        if skip is not None and skip.is_set():
+            return False, None, "skipped"
+        cur = _clipboard()
+        if _is_new_log(cur, before):
+            return True, cur, "saved"
+        time.sleep(0.15)
+    return False, None, "timeout"
 
 
 def calibrate():
@@ -405,7 +471,8 @@ def load_templates():
     return btn, cpy, cont
 
 
-def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None):
+def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
+                 on_prompt=None, skip=None):
     """
     Watch for the result screen until `stop` is set.
 
@@ -413,6 +480,10 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None):
     the player presses Continue. A colour check on a small strip runs
     every poll and costs almost nothing; only when it fires do we grab
     the full window and confirm with template matching.
+
+    on_shield(rect, hold_s=None) covers Continue (rect None uncovers it).
+    on_prompt("waiting", seconds) / ("saved") / ("missed") drives the
+    "copy the log yourself" pop-up; setting `skip` ends the wait early.
     """
     template, copy_template, cont_template = load_templates()
 
@@ -478,18 +549,46 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None):
 
         # Cover the Continue button before doing anything else: the
         # whole point is that it is blocked during the copy, not after.
+        before = _clipboard()
         if on_shield:
             on_shield(shield_rect(win))
         if on_status:
             on_status("match over - capturing, don't press Continue")
         print(f"[autocopy] result screen confirmed in "
               f"{(time.time()-t_seen)*1000:.0f}ms (log btn {score:.2f})")
+        why = None
         try:
-            ok, text = do_copy(win, xy, copy_template, expected, on_status)
+            ok, text = do_copy(win, xy, copy_template, expected, on_status,
+                               before)
+            stopped = stop is not None and stop.is_set()
+            if not ok and not stopped:
+                # Continue stays covered, and the cover's clock restarts
+                print("[autocopy]   copy missed, trying once more")
+                if on_shield:
+                    on_shield(shield_rect(win))
+                ok, text = retry_copy(win, template, copy_template, expected,
+                                      on_status, before)
+            if not ok and not stopped and MANUAL_WAIT_S > 0:
+                # Still nothing: ask the player to copy it, and keep
+                # Continue covered while they do -- for a while.
+                print("[autocopy]   asking for the log to be copied by hand")
+                if skip is not None:
+                    skip.clear()
+                if on_shield:
+                    on_shield(shield_rect(win), MANUAL_WAIT_S + 2)
+                if on_prompt:
+                    on_prompt("waiting", MANUAL_WAIT_S)
+                if on_status:
+                    on_status("copy the battle log")
+                ok, text, why = wait_for_manual_copy(before, MANUAL_WAIT_S,
+                                                     stop, skip)
+                print(f"[autocopy]   manual copy: {why}")
         finally:
             # always drop the shield, even if the copy raised
             if on_shield:
                 on_shield(None)
+            if on_prompt and why is not None:
+                on_prompt("saved" if ok else "missed")
         last_fire = time.time()
         armed = False
 
