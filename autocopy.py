@@ -287,11 +287,44 @@ def _clipboard():
         return None
 
 
+def _clip_seq():
+    """
+    Windows' clipboard counter: it goes up every time anything is copied,
+    even the exact same text again. None where it isn't available.
+    """
+    try:
+        import ctypes
+        return int(ctypes.windll.user32.GetClipboardSequenceNumber())
+    except Exception:
+        return None
+
+
+def _clip_state():
+    """What's on the clipboard now, to tell a fresh copy from what was
+    already there: (counter, text)."""
+    return (_clip_seq(), _clipboard())
+
+
 def _is_new_log(cur, before):
-    """A battle log that wasn't on the clipboard when the capture began
-    (or is the same text, but plainly a log)."""
-    return bool(cur) and "Setup" in cur[:400] and (
-        cur != before or "\'s Turn" in cur)
+    """
+    A battle log that was copied after the capture began.
+
+    Being a log isn't enough: the clipboard can still hold the previous
+    match's log, and if the copy click didn't take, that old log would
+    look like a success -- then get thrown away as a repeat, with no
+    retry and no pop-up. So something has to have been copied since the
+    capture began. Windows' clipboard counter says so directly, even
+    when the game copies the same text again; without it, the text has
+    to differ.
+    """
+    if not cur or "Setup" not in cur[:400]:
+        return False
+    before_seq, before_text = (before if isinstance(before, tuple)
+                               else (None, before))
+    seq = _clip_seq()
+    if seq is not None and before_seq is not None:
+        return seq != before_seq
+    return cur != before_text
 
 
 def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
@@ -312,7 +345,7 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
     """
     t_start = time.time()
     if before is None:
-        before = _clipboard()
+        before = _clip_state()
 
     try:
         win.activate()
@@ -549,7 +582,7 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
 
         # Cover the Continue button before doing anything else: the
         # whole point is that it is blocked during the copy, not after.
-        before = _clipboard()
+        before = _clip_state()
         if on_shield:
             on_shield(shield_rect(win))
         if on_status:

@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.35.0"
+VERSION = "1.35.1"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,14 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.35.1", "2026-09-30", [
+        "Fixed a missed capture that looked like a success. If the copy "
+        "click didn't take and the clipboard still held your previous "
+        "match's log, the app took that old log as the new one, then "
+        "threw it away as a repeat, so it never retried or asked you to "
+        "copy it. Now only a log copied after the match ends counts, so "
+        "a copy that didn't take gets the retry and the pop-up.",
+    ]),
     ("1.35.0", "2026-09-29", [
         "A missed copy gets a second chance. If a click closes the battle "
         "log before the app can copy it, it tries again straight away. If "
