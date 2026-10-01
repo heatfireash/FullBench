@@ -26,6 +26,13 @@ import json
 import re
 from collections import Counter
 
+try:
+    from ptcgl_parse import mega_family
+except ImportError:                      # used on its own
+    def mega_family(name):
+        m = re.match(r"^(Mega \S.*?) [XY]( ex)?$", name or "")
+        return f"{m.group(1)}{m.group(2) or ''}" if m else name
+
 # Shown in almost every deck, so they say nothing about which deck it is.
 GENERIC = {
     "Ultra Ball", "Nest Ball", "Buddy-Buddy Poffin", "Rare Candy", "Switch",
@@ -145,16 +152,20 @@ def _split(mons):
     dmg, use = {}, {}
     if isinstance(mons, dict):
         for m, v in mons.items():
+            # both Mega forms of one Pokemon (Charizard X and Y) are one
+            # Pokemon for grouping and naming: decks run both
+            m = mega_family(m)
             if isinstance(v, dict):
-                dmg[m] = int(v.get("d", 0) or 0)
-                use[m] = int(v.get("u", 0) or 0)
+                dmg[m] = dmg.get(m, 0) + int(v.get("d", 0) or 0)
+                use[m] = use.get(m, 0) + int(v.get("u", 0) or 0)
             else:
-                dmg[m] = int(v or 0)
-                use[m] = 0
+                dmg[m] = dmg.get(m, 0) + int(v or 0)
+                use.setdefault(m, 0)
     else:
         for m in mons:
-            dmg[m] = 0
-            use[m] = 0
+            m = mega_family(m)
+            dmg.setdefault(m, 0)
+            use.setdefault(m, 0)
     return dmg, use
 
 
@@ -210,6 +221,19 @@ def build(sides):
     def informative(sig, dmg):
         return bool(identity(sig, dmg))
 
+    # A group can't take in a game that shows a deck it has never seen
+    # lead: one where the Pokemon that did the most damage, or a Mega,
+    # appears in none of the group's games. Without this, a Charizard
+    # deck that also runs Kangaskhan, Latias and Meowth for draw was
+    # filed under the Kangaskhan deck those three also appear in, though
+    # Charizard did all the damage. The same rule Limitless naming uses:
+    # a deck is never named after one that doesn't play its attacker.
+    def foreign(group_known, top, ident):
+        if top and top not in group_known:
+            return True
+        return any(m.startswith("Mega ") and m not in group_known
+                   for m in ident)
+
     with_attacks = [it for it in items
                     if led_by_main(it[2]) and informative(it[1], it[2])]
     without = [it for it in items
@@ -229,6 +253,20 @@ def build(sides):
         best, best_score = None, 0.0
         for c in clusters:
             known = c["pool"] | set(c["counts"])
+            if foreign(known, top, ident):
+                continue
+            # and the other way round: a game whose attacker isn't one of
+            # this group's, and that didn't even show the group's own
+            # lead attacker, is another deck that shares its helpers --
+            # a Kangaskhan deck must not join a Charizard group because
+            # the Charizard deck runs Kangaskhan for draw. (A game of this
+            # deck where a side attacker took the KOs and the main one
+            # never came out starts a group of its own, which pass 3 then
+            # folds back in.)
+            lead = (c["top_counts"].most_common(1)[0][0]
+                    if c["top_counts"] else None)
+            if lead and lead not in sig and top not in c["attackers"]:
+                continue
             score = _containment(ident, known)
             if top in c["attackers"]:
                 score += 0.35
@@ -247,9 +285,13 @@ def build(sides):
     # becoming a group of one.
     for key, sig, dmg, use in without:
         ident = identity(sig, dmg) or set(sig)
+        top = _top_attacker(dmg)
         best, best_score = None, 0.0
         for c in clusters:
-            score = _containment(ident, c["pool"] | set(c["counts"]))
+            known = c["pool"] | set(c["counts"])
+            if foreign(known, top, ident):
+                continue
+            score = _containment(ident, known)
             if score > best_score:
                 best, best_score = c, score
         if best is not None and best_score >= JOIN * 0.8:
@@ -267,7 +309,11 @@ def build(sides):
     for c in small:
         best, best_score = None, 0.0
         for b in big:
-            score = _containment(set(c["counts"]), b["pool"] | set(b["counts"]))
+            known = b["pool"] | set(b["counts"])
+            if any(foreign(known, a, set(c["counts"])) for a in
+                   (c["attackers"] or {None})):
+                continue
+            score = _containment(set(c["counts"]), known)
             if score > best_score:
                 best, best_score = b, score
         if best is not None and best_score >= 0.4:

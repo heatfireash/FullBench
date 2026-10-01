@@ -513,7 +513,7 @@ def parse(text: str, me: str | None = None) -> dict:
 #   4 -- the game's card codes dropped from names: "(mebsp_33) Mega
 #        Lucario ex" is read as "Mega Lucario ex"
 #   5 -- and the longer codes too: "(me1_73_ph) Hariyama"
-PARSER_VERSION = 5
+PARSER_VERSION = 6
 
 _OWNER_RE = re.compile(r"^[^'’]{1,24}['’]s\s+")
 
@@ -548,6 +548,31 @@ def same_line(a, b):
     return bool(aw) and aw[:4] == bw[:4]
 
 
+# Pokemon with two Mega forms, like Mega Charizard X ex and Mega
+# Charizard Y ex. Decks often run both and attack with whichever suits
+# the game, so for naming they're one Pokemon: "Mega Charizard ex".
+# Card lists keep the real names -- only deck names use this.
+_MEGA_XY = re.compile(r"^(Mega \S.*?) [XY]( ex)?$")
+
+
+def mega_family(name):
+    """'Mega Charizard X ex' -> 'Mega Charizard ex'; other names as-is."""
+    m = _MEGA_XY.match(name or "")
+    return f"{m.group(1)}{m.group(2) or ''}" if m else name
+
+
+def fold_mega_forms(d, add=lambda a, b: a + b):
+    """A per-Pokemon dict with each Mega X/Y pair merged into one entry,
+    their values combined with `add`."""
+    if not d:
+        return d
+    out = {}
+    for k, v in d.items():
+        fk = mega_family(k)
+        out[fk] = add(out[fk], v) if fk in out else v
+    return out
+
+
 def guess_archetype(card_counts: dict, moves: dict = None,
                     damage: dict = None, evolutions: dict = None,
                     uses: dict = None) -> str | None:
@@ -571,9 +596,13 @@ def guess_archetype(card_counts: dict, moves: dict = None,
     """
     if not card_counts:
         return None
-    moves = moves or {}
-    damage = damage or {}
-    evolutions = evolutions or {}
+    # both Mega forms of one Pokemon count as one
+    card_counts = fold_mega_forms(card_counts)
+    moves = fold_mega_forms(moves or {}, lambda a, b: list(a) + list(b))
+    damage = fold_mega_forms(damage or {})
+    evolutions = fold_mega_forms(evolutions or {})
+    if uses is not None:
+        uses = fold_mega_forms(uses)
     if uses is None:
         uses = {n: len(v) for n, v in moves.items()
                 if not damage.get(n)}

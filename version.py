@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.35.1"
+VERSION = "1.35.3"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,30 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.35.3", "2026-10-01", [
+        "When the game ignores the first click on the copy icon, the app "
+        "clicks it again after 0.7 seconds instead of waiting nearly 3 "
+        "seconds to start over, so those captures finish about two "
+        "seconds sooner.",
+        "A deck is no longer grouped under another deck that only shares "
+        "its helpers. A Charizard deck that runs Kangaskhan, Latias and "
+        "Meowth for draw was being named after a Kangaskhan deck, though "
+        "Charizard did all the damage. A deck now only joins a group "
+        "that plays the Pokémon doing its damage.",
+    ]),
+    ("1.35.2", "2026-10-01", [
+        "Moving the mouse as a match ends no longer makes the capture miss. "
+        "The app's clicks on Battle Log and the copy icon could land "
+        "wherever your mouse had wandered to. The pointer is now held on "
+        "the button for the tenth of a second each click takes, then let "
+        "go.",
+        "Decks that run both Mega Charizard X ex and Mega Charizard Y ex "
+        "get one name, \"Mega Charizard ex\", whichever one attacked. "
+        "Before, the same deck was called Charizard X in one game and "
+        "Charizard Y in the next. The same goes for any Pokémon with X "
+        "and Y Mega forms. Matches already recorded are renamed the next "
+        "time the app starts.",
+    ]),
     ("1.35.1", "2026-09-30", [
         "Fixed a missed capture that looked like a success. If the copy "
         "click didn't take and the clipboard still held your previous "

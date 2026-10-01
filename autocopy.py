@@ -121,6 +121,10 @@ def shield_rect(win):
             int(win.height * (y1 - y0)))
 PANEL_TIMEOUT_S = 2.5    # max wait for the battle log panel to render
 CLIPBOARD_TIMEOUT_S = 2.0  # max wait for the copy to land
+# The copy icon can show before the panel takes clicks, so the first click
+# is sometimes ignored. If nothing has reached the clipboard this long
+# after it, the icon is clicked again (still inside CLIPBOARD_TIMEOUT_S).
+RECLICK_AFTER_S = 0.7
 # If the automatic copy misses twice -- usually a stray click closed the
 # battle log before the copy icon could be clicked -- Continue stays
 # covered this long while the player copies the log by hand. After that
@@ -273,10 +277,80 @@ def locate(frame, template, expected_scale=None, threshold=None, region=None):
     return None, score
 
 
+class _HoldCursor:
+    """
+    Pin the mouse pointer to one pixel for the length of a click.
+
+    The game reads where the pointer is when the button goes down. If the
+    player is moving the mouse at that moment -- easy to do as a match
+    ends -- the pointer drifts off the button between our move and our
+    click, and the click lands somewhere else. Windows' ClipCursor keeps
+    the pointer in a rectangle whatever the mouse does; a one-pixel
+    rectangle holds it still. It needs no special permissions.
+
+    Afterwards the pointer is set free, even if the click fails. The one
+    limit put back is the game keeping the pointer inside its own window,
+    if it was doing that. Any other rectangle is never restored: getting
+    that wrong could trap the pointer on one screen.
+    """
+
+    def __init__(self, x, y, window=None):
+        self.x, self.y = int(x), int(y)
+        self.window = window           # (left, top, right, bottom)
+        self.old = None
+        self.held = False
+
+    def __enter__(self):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            u = ctypes.windll.user32
+            old = wintypes.RECT()
+            if u.GetClipCursor(ctypes.byref(old)):
+                self.old = old
+            pin = wintypes.RECT(self.x, self.y, self.x + 1, self.y + 1)
+            self.held = bool(u.ClipCursor(ctypes.byref(pin)))
+        except Exception:
+            self.held = False          # not Windows, or refused: click anyway
+        return self
+
+    def __exit__(self, *exc):
+        if not self.held:
+            return False
+        try:
+            import ctypes
+            u = ctypes.windll.user32
+            if self._game_was_confining():
+                u.ClipCursor(ctypes.byref(self.old))
+            else:
+                u.ClipCursor(None)
+        except Exception:
+            pass
+        return False
+
+    def _game_was_confining(self):
+        o, w = self.old, self.window
+        if o is None or w is None:
+            return False
+        inside = (o.left >= w[0] - 2 and o.top >= w[1] - 2 and
+                  o.right <= w[2] + 2 and o.bottom <= w[3] + 2)
+        return inside and o.right - o.left > 1 and o.bottom - o.top > 1
+
+
 def _click(win, xy):
-    pydirectinput.moveTo(win.left + xy[0], win.top + xy[1])
-    time.sleep(0.02)
-    pydirectinput.click()
+    """
+    Click at a point in the game window, with the pointer held there for
+    the whole click so a moving mouse can't pull it off the button. The
+    hold is about a tenth of a second.
+    """
+    x, y = win.left + xy[0], win.top + xy[1]
+    rect = (win.left, win.top, win.left + win.width, win.top + win.height)
+    with _HoldCursor(x, y, rect):
+        pydirectinput.moveTo(x, y)
+        time.sleep(0.03)
+        pydirectinput.click()
+        # stay put a couple of frames: the game reads the pointer per frame
+        time.sleep(0.05)
 
 
 def _clipboard():
@@ -371,7 +445,7 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
                                region=COPY_REGION)
             if xy:
                 _click(win, xy)
-                clicked = True
+                clicked = xy
                 if on_status:
                     on_status("copying")
                 break
@@ -386,12 +460,29 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
         return False, None
 
     # confirm: wait for the clipboard to actually change to a log
-    deadline = time.time() + CLIPBOARD_TIMEOUT_S
+    t_click = time.time()
+    deadline = t_click + CLIPBOARD_TIMEOUT_S
+    reclicked = False
     while time.time() < deadline:
         cur = _clipboard()
         if _is_new_log(cur, before):
-            print(f"[autocopy]   captured in {time.time()-t_start:.1f}s")
+            print(f"[autocopy]   captured in {time.time()-t_start:.1f}s"
+                  + (" (second click)" if reclicked else ""))
             return True, cur
+        if (not reclicked and isinstance(clicked, tuple)
+                and time.time() - t_click >= RECLICK_AFTER_S):
+            # first click ignored: click the icon again, wherever it is now
+            reclicked = True
+            xy = clicked
+            try:
+                found, _ = locate(grab(win), copy_template, expected_scale,
+                                  threshold=COPY_MATCH_THRESHOLD,
+                                  region=COPY_REGION)
+                xy = found or None
+            except Exception:
+                xy = None
+            if xy:
+                _click(win, xy)
         time.sleep(0.06)
 
     print(f"[autocopy]   copy not confirmed after "
