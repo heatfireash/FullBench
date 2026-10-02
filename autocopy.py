@@ -11,13 +11,10 @@ the game process.
 Install:
     pip install mss opencv-python-headless numpy pygetwindow pydirectinput
 
-Setup:
-    1. python autocopy.py --calibrate
-       Finish a match, leave the result screen up, run this. It saves a
-       screenshot to ~/ptcgl_calib.png and prints the window geometry.
-    2. Crop the Battle Log button out of that screenshot, save it as
-       battlelog_button.png next to this script.
-    3. python autocopy.py
+Screen captures are only ever held in memory, to find the buttons, and
+are never saved or sent anywhere.
+
+    python autocopy.py
 
 Run it alongside ptcgl_tracker.py.
 """
@@ -119,12 +116,19 @@ def shield_rect(win):
             win.top + int(win.height * y0),
             int(win.width * (x1 - x0)),
             int(win.height * (y1 - y0)))
-PANEL_TIMEOUT_S = 2.5    # max wait for the battle log panel to render
-CLIPBOARD_TIMEOUT_S = 2.0  # max wait for the copy to land
-# The copy icon can show before the panel takes clicks, so the first click
-# is sometimes ignored. If nothing has reached the clipboard this long
-# after it, the icon is clicked again (still inside CLIPBOARD_TIMEOUT_S).
+PANEL_TIMEOUT_S = 3.0    # max wait for the battle log panel to render
+CLIPBOARD_TIMEOUT_S = 3.0  # max wait for the copy to land
+# The copy icon shows while the panel is still sliding in, before the game
+# takes clicks on it. So it isn't clicked until it has been found in the
+# same place in two frames in a row, and then not for SETTLE_S more.
+STEADY_PX = 3
+SETTLE_S = 0.25
+# If nothing has reached the clipboard this long after a click, the icon
+# is clicked again, as often as fits inside CLIPBOARD_TIMEOUT_S.
 RECLICK_AFTER_S = 0.7
+# The icon looks different with the pointer over it, so finding it again
+# for a second click searches just around where it was, less strictly.
+RECLICK_THRESHOLD = 0.70
 # If the automatic copy misses twice -- usually a stray click closed the
 # battle log before the copy icon could be clicked -- Continue stays
 # covered this long while the player copies the log by hand. After that
@@ -345,10 +349,21 @@ def _click(win, xy):
     """
     x, y = win.left + xy[0], win.top + xy[1]
     rect = (win.left, win.top, win.left + win.width, win.top + win.height)
+    # Move first, as a real mouse move the game sees, and give it a few
+    # frames to notice the pointer is over the button. Pinning first
+    # would put the pointer there without the game seeing it arrive.
+    pydirectinput.moveTo(x, y, _pause=False)
+    time.sleep(0.05)
     with _HoldCursor(x, y, rect):
-        pydirectinput.moveTo(x, y)
-        time.sleep(0.03)
-        pydirectinput.click()
+        # pinning puts the pointer back on the button if the player moved
+        # it in the last 50ms; give the game a couple of frames to see that
+        pydirectinput.moveTo(x, y, _pause=False)
+        time.sleep(0.04)
+        # press and release as two events, like a real click, rather than
+        # both at once, which a game reading the button per frame can miss
+        pydirectinput.mouseDown(_pause=False)
+        time.sleep(0.06)
+        pydirectinput.mouseUp(_pause=False)
         # stay put a couple of frames: the game reads the pointer per frame
         time.sleep(0.05)
 
@@ -431,10 +446,13 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
         if on_status:
             on_status("opening battle log")
 
-    # poll for the copy button rather than sleeping blindly
+    # poll for the copy button rather than sleeping blindly, and click it
+    # only once it has stopped moving
     clicked = False
+    t_open = time.time()
     if copy_template is not None:
         deadline = time.time() + PANEL_TIMEOUT_S
+        last = None
         while time.time() < deadline:
             try:
                 frame = grab(win)
@@ -443,13 +461,23 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
             xy, score = locate(frame, copy_template, expected_scale,
                                threshold=COPY_MATCH_THRESHOLD,
                                region=COPY_REGION)
-            if xy:
+            if xy and last and abs(xy[0] - last[0]) <= STEADY_PX \
+                    and abs(xy[1] - last[1]) <= STEADY_PX:
+                print(f"[autocopy]   copy icon steady after "
+                      f"{time.time()-t_open:.2f}s ({score:.2f})")
+                time.sleep(SETTLE_S)
                 _click(win, xy)
                 clicked = xy
                 if on_status:
                     on_status("copying")
                 break
+            last = xy
             time.sleep(0.08)
+        if not clicked and last:
+            # seen but never steady: click where it was last
+            print("[autocopy]   copy icon never settled, clicking anyway")
+            _click(win, last)
+            clicked = last
 
     if not clicked and btn_xy is not None:
         # fallback: select-all in the log body
@@ -462,32 +490,55 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
     # confirm: wait for the clipboard to actually change to a log
     t_click = time.time()
     deadline = t_click + CLIPBOARD_TIMEOUT_S
-    reclicked = False
+    clicks = 1
     while time.time() < deadline:
         cur = _clipboard()
         if _is_new_log(cur, before):
             print(f"[autocopy]   captured in {time.time()-t_start:.1f}s"
-                  + (" (second click)" if reclicked else ""))
+                  + (f" (click {clicks})" if clicks > 1 else ""))
             return True, cur
-        if (not reclicked and isinstance(clicked, tuple)
-                and time.time() - t_click >= RECLICK_AFTER_S):
-            # first click ignored: click the icon again, wherever it is now
-            reclicked = True
-            xy = clicked
-            try:
-                found, _ = locate(grab(win), copy_template, expected_scale,
-                                  threshold=COPY_MATCH_THRESHOLD,
-                                  region=COPY_REGION)
-                xy = found or None
-            except Exception:
-                xy = None
+        if (isinstance(clicked, tuple)
+                and time.time() - t_click >= RECLICK_AFTER_S
+                and time.time() + 0.3 < deadline):
+            # click ignored: click the icon again, if it's still there
+            xy = _find_again(win, copy_template, expected_scale, clicked)
+            t_click = time.time()
             if xy:
+                clicks += 1
+                clicked = xy
                 _click(win, xy)
+            else:
+                # the panel closed: go straight to the retry
+                print("[autocopy]   copy icon gone, not clicking again")
+                break
         time.sleep(0.06)
 
     print(f"[autocopy]   copy not confirmed after "
-          f"{time.time()-t_start:.1f}s")
+          f"{time.time()-t_start:.1f}s ({clicks} click"
+          f"{'s' if clicks > 1 else ''} on the icon)")
     return False, None
+
+
+def _find_again(win, copy_template, expected_scale, near):
+    """The copy icon again, for another click. With the pointer over it the
+    icon is highlighted and matches less well, so if the usual search
+    misses, look just around where it was, less strictly. None if the
+    panel has closed."""
+    try:
+        frame = grab(win)
+    except Exception:
+        return None
+    xy, _ = locate(frame, copy_template, expected_scale,
+                   threshold=COPY_MATCH_THRESHOLD, region=COPY_REGION)
+    if xy:
+        return xy
+    h, w = frame.shape[:2]
+    pad_x, pad_y = max(80, w // 12), max(80, h // 12)
+    region = (max(0, near[0] - pad_x) / w, max(0, near[1] - pad_y) / h,
+              min(w, near[0] + pad_x) / w, min(h, near[1] + pad_y) / h)
+    xy, _ = locate(frame, copy_template, expected_scale,
+                   threshold=RECLICK_THRESHOLD, region=region)
+    return xy
 
 
 def retry_copy(win, template, copy_template, expected, on_status, before):
@@ -536,48 +587,6 @@ def wait_for_manual_copy(before, seconds, stop=None, skip=None):
             return True, cur, "saved"
         time.sleep(0.15)
     return False, None, "timeout"
-
-
-def calibrate():
-    win = find_window()
-    if not win:
-        print("PTCGL window not found. Is the game running and not minimised?")
-        return
-    frame = grab(win)
-    out = Path.home() / "ptcgl_calib.png"
-    cv2.imwrite(str(out), frame)
-
-    CALIB.write_text(json.dumps({
-        "window_width": win.width,
-        "window_height": win.height,
-    }, indent=2))
-
-    print(f"saved {out}")
-    print(f"saved {CALIB.name} (window {win.width}x{win.height})")
-
-    # multi-monitor sanity checks
-    print(f"\nwindow at left={win.left} top={win.top}")
-    with mss.mss() as sct:
-        for i, m in enumerate(sct.monitors[1:], start=1):
-            print(f"  monitor {i}: {m['width']}x{m['height']} "
-                  f"at ({m['left']}, {m['top']})")
-
-    if win.left < 0 or win.top < 0:
-        print("\n  note: window has negative coordinates -- it's on a monitor")
-        print("  left of or above your primary. Check the PNG actually shows")
-        print("  the game. If it's black or the wrong screen, move PTCGL to")
-        print("  your primary monitor and re-calibrate.")
-
-    mean = float(frame.mean())
-    if mean < 3.0:
-        print("\n  WARNING: captured frame is essentially black. The grab")
-        print("  did not get the game window. Multi-monitor capture issue.")
-    else:
-        print(f"\n  capture looks valid (mean brightness {mean:.0f}).")
-
-    print("\ncrop the Battle Log button from the PNG -> battlelog_button.png")
-    print("if you later change resolution, the scale sweep should still")
-    print("find it -- no need to re-crop unless the UI itself changes.")
 
 
 def load_templates():
@@ -740,12 +749,8 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--calibrate", action="store_true")
     ap.add_argument("--poll", type=float, default=POLL_S)
     args = ap.parse_args()
-    if args.calibrate:
-        calibrate()
-        return
     print("ctrl-c to stop.\n")
     try:
         watch_screen(args.poll)

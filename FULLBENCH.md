@@ -25,7 +25,7 @@ on the result screen, so you don't have to remember.
 | `battlelog_button.png` | template: the BATTLE LOG button |
 | `copy_button.png` | template: the export icon inside the log panel |
 | `continue_button.png` | template: CONTINUE — confirms it's the result screen |
-| `calibration.json` | your window size, written by `--calibrate` |
+| `calibration.json` | the window size the templates were cropped at |
 
 Put all of them in one folder.
 
@@ -56,8 +56,10 @@ py ptcgl_gui.py
 ```
 
 The three `.png` templates were cropped from a 2560×1440 window. They
-should match other sizes too (tested 720p–4K). If clicks miss, re-crop
-from a fresh `--calibrate` screenshot.
+should match other sizes too (tested 720p–4K).
+
+Screen captures are only held in memory while the app looks for those
+buttons. They are never saved to disk or uploaded.
 
 ## Run
 

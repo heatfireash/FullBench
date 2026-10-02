@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.35.3"
+VERSION = "1.35.4"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -14,6 +14,21 @@ DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
 CHANGELOG = [
+    ("1.35.4", "2026-10-02", [
+        "The first try at copying the battle log no longer misses. The app "
+        "was clicking the copy icon while the log panel was still sliding "
+        "in, before the game would take the click, so every capture needed "
+        "a second go. It now waits for the icon to stop moving, then "
+        "clicks.",
+        "Clicks are sent the way a mouse sends them: the pointer moves "
+        "onto the button first, then the button goes down and comes back "
+        "up, instead of all at once.",
+        "The app no longer has any way to save a screenshot. The screen "
+        "is only ever looked at in memory, to find the Battle Log and "
+        "copy buttons, and nothing from it is saved or uploaded. (The "
+        "old --calibrate option, which saved one screenshot for "
+        "cropping those buttons, has been removed.)",
+    ]),
     ("1.35.3", "2026-10-01", [
         "When the game ignores the first click on the copy icon, the app "
         "clicks it again after 0.7 seconds instead of waiting nearly 3 "

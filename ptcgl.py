@@ -5,7 +5,6 @@ Runs the clipboard watcher and the screen watcher in one process.
 
     py ptcgl.py                  run everything
     py ptcgl.py --no-autocopy    clipboard only (you copy manually)
-    py ptcgl.py --calibrate      capture a screenshot for template cropping
     py ptcgl.py --stats          quick summary, then exit
 
 Ctrl-C stops it cleanly.
@@ -27,14 +26,8 @@ def main():
                     help="your PTCGL name (auto-detected from logs if omitted)")
     ap.add_argument("--no-autocopy", action="store_true",
                     help="don't drive the game window; only watch clipboard")
-    ap.add_argument("--calibrate", action="store_true")
     ap.add_argument("--stats", action="store_true")
     args = ap.parse_args()
-
-    if args.calibrate:
-        import autocopy
-        autocopy.calibrate()
-        return
 
     if args.stats:
         import ptcgl_stats
@@ -63,8 +56,7 @@ def main():
             threads.append(t2)
         except FileNotFoundError as e:
             print(f"[autocopy] disabled: {e}")
-            print("[autocopy] run  py ptcgl.py --calibrate  to make one,")
-            print("[autocopy] or use --no-autocopy to silence this.")
+            print("[autocopy] use --no-autocopy to silence this.")
         except ImportError as e:
             print(f"[autocopy] disabled, missing package: {e.name}")
             print("[autocopy] pip install mss opencv-python-headless numpy pygetwindow pydirectinput")
