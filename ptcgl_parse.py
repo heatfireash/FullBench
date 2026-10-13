@@ -251,6 +251,14 @@ ATTACK_RE = re.compile(
     rf"^(?P<who>.+?){AP}s (?P<mon>.+?) used (?P<attack>.+?)"
     rf"(?: on (?P<target_owner>.+?){AP}s (?P<target>.+?) "
     rf"for (?P<dmg>[\d,]+) damage)?\.", re.M)
+# "X played Tandemaus to the Bench." -- whatever goes to the Bench or the
+# Active Spot is a Pokemon, whether or not it ever attacks
+TO_PLAY_RE = re.compile(
+    r"^(?:- )?(?P<who>.+?) played (?P<card>.+?) to the (?:Bench|Active Spot)\.$",
+    re.M)
+# "X's Maushold is now in the Active Spot."
+NOW_ACTIVE_RE = re.compile(
+    rf"^(?:- )?(?P<who>.+?){AP}s (?P<mon>.+?) is now in the Active Spot\.", re.M)
 # bullet lines listing revealed/drawn cards
 BULLET_RE = re.compile(r"^\s*\u2022\s*(?P<cards>.+?)\s*$", re.M)
 # "X drew 2 more cards because Y took at least 1 mulligan."
@@ -455,6 +463,46 @@ def parse(text: str, me: str | None = None) -> dict:
             pmg[a["player"]][a["pokemon"]] = (
                 pmg[a["player"]].get(a["pokemon"], 0) + a["damage"])
 
+    # Attacks that do no damage. An ability and an attack read the same
+    # in the log ("X's Maushold used Gnaw Together."), but an attack ends
+    # the turn: a turn with no "ended their turn" line ended on its last
+    # "used" by the player whose turn it was. (Gnaw Together makes the
+    # other player discard cards and does no damage, and used to be
+    # counted as an ability.)
+    zero = {n: {} for n in names}
+    line_list = t.split("\n")
+    turn_owner, last_used, ended = None, None, False
+
+    def close_turn():
+        if turn_owner and last_used and not ended:
+            who_, mon_ = last_used
+            zero[who_][mon_] = zero[who_].get(mon_, 0) + 1
+
+    for line in line_list:
+        st = line.strip()
+        tm = TURN_RE.match(st)
+        if tm:
+            close_turn()
+            turn_owner, last_used, ended = tm.group("who").strip(), None, False
+            continue
+        if not turn_owner:
+            continue
+        if st.startswith(turn_owner) and " ended " in st and st.endswith(" turn."):
+            ended = True
+            continue
+        if " conceded" in st:
+            # a concede ends the turn too, so whatever was used last
+            # before it may have been an ability: don't count it
+            last_used = None
+            continue
+        am = ATTACK_RE.match(st)
+        if am and am.group("who").strip() == turn_owner:
+            if am.group("dmg"):
+                last_used = None         # a damaging attack: counted already
+            else:
+                last_used = (turn_owner, am.group("mon").strip())
+    close_turn()
+
     # how many times each Pokemon used something that did no damage --
     # abilities, almost always. A Metang that fires Metal Maker four
     # times a game is part of the deck's identity even though it never
@@ -464,6 +512,50 @@ def parse(text: str, me: str | None = None) -> dict:
         if not a["damage"]:
             uses[a["player"]][a["pokemon"]] = (
                 uses[a["player"]].get(a["pokemon"], 0) + 1)
+    for who_, d_ in zero.items():
+        for mon_, n_ in d_.items():
+            left = uses[who_].get(mon_, 0) - n_
+            if left > 0:
+                uses[who_][mon_] = left
+            else:
+                uses[who_].pop(mon_, None)
+
+    # every Pokemon seen in play: played to the Bench or the Active Spot,
+    # evolved from or into, given a card, attacked, moved up, Knocked Out
+    in_play = {n: set() for n in names}
+
+    def seen(who_, mon_):
+        who_, mon_ = (who_ or "").strip(), (mon_ or "").strip()
+        if who_ in in_play and mon_ and mon_.lower() not in NOT_A_CARD:
+            in_play[who_].add(mon_)
+
+    for m in TO_PLAY_RE.finditer(t):
+        seen(m.group("who"), m.group("card"))
+    for m in EVOLVED_RE.finditer(t):
+        seen(m.group("who"), m.group("from"))
+        seen(m.group("who"), m.group("to"))
+    for m in ATTACHED_RE.finditer(t):
+        seen(m.group("who"), m.group("mon"))
+    for m in NOW_ACTIVE_RE.finditer(t):
+        seen(m.group("who"), m.group("mon"))
+    for m in KO_RE.finditer(t):
+        seen(m.group("owner"), m.group("mon"))
+    for a in attacks:
+        seen(a["player"], a["pokemon"])
+    for i, line in enumerate(line_list):
+        st = line.strip().lower()
+        if "played them to the bench" not in st:
+            continue
+        who_ = next((n for n in names if line.strip().startswith(n)
+                     or line.strip().startswith(f"- {n}")), None)
+        j = i + 1
+        while j < len(line_list) and not line_list[j].strip():
+            j += 1
+        if who_ and j < len(line_list):
+            bm = BULLET_RE.match(line_list[j])
+            if bm:
+                for c_ in bm.group("cards").split(","):
+                    seen(who_, c_)
 
     return {
         "parse_ok": True,
@@ -497,6 +589,11 @@ def parse(text: str, me: str | None = None) -> dict:
         "opponent_evolutions": evos.get(opp, {}) if opp else {},
         "player_ability_uses": uses.get(me, {}),
         "opponent_ability_uses": uses.get(opp, {}) if opp else {},
+        # attacks that did no damage, per Pokemon (Maushold's Gnaw Together)
+        "player_zero_attacks": zero.get(me, {}),
+        "opponent_zero_attacks": zero.get(opp, {}) if opp else {},
+        "player_in_play": sorted(in_play.get(me, ())),
+        "opponent_in_play": sorted(in_play.get(opp, ())) if opp else [],
     }
 
 
@@ -513,7 +610,10 @@ def parse(text: str, me: str | None = None) -> dict:
 #   4 -- the game's card codes dropped from names: "(mebsp_33) Mega
 #        Lucario ex" is read as "Mega Lucario ex"
 #   5 -- and the longer codes too: "(me1_73_ph) Hariyama"
-PARSER_VERSION = 6
+#   7 -- every Pokemon seen in play counts, not only the ones that
+#        attacked or evolved; an attack that does no damage (Maushold's
+#        Gnaw Together) counts as an attack, not an ability
+PARSER_VERSION = 7
 
 _OWNER_RE = re.compile(r"^[^'’]{1,24}['’]s\s+")
 

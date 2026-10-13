@@ -42,6 +42,31 @@ GENERIC = {
     "Energy Retrieval", "Energy Recycler", "Jumbo Ice Cream",
 }
 
+# Deck names stick: once a game has a name it keeps it, on the site and
+# in the app, and a new game of a deck Full Bench named takes the name the
+# deck already has. Bump this only when a naming fix should be applied to
+# games already named; every game is then named once more, and sticks
+# again.
+NAMING_VERSION = 1
+
+
+def settled_name(fresh, members, kept):
+    """
+    The name for a game that hasn't got one yet, in a group that may.
+
+    fresh:   the name the group gets now, from all its games
+    members: the other games in the group
+    kept:    {game: name} for games whose name is already settled
+
+    The name most of the group's settled games already have; the fresh
+    one only if none of them is settled.
+    """
+    names = Counter(kept[m] for m in members if m in kept)
+    if names:
+        return names.most_common(1)[0][0]
+    return fresh
+
+
 # How much of a deck's Pokemon must appear in a group for it to belong.
 JOIN = 0.6
 # Below this many games a group is not named separately; it is reported
@@ -149,7 +174,7 @@ def _split(mons):
     Accept either {mon: damage} or {mon: {"d": damage, "u": uses}}.
     Returns (damage, uses) dicts.
     """
-    dmg, use = {}, {}
+    dmg, use = _Damage(), {}
     if isinstance(mons, dict):
         for m, v in mons.items():
             # both Mega forms of one Pokemon (Charizard X and Y) are one
@@ -158,6 +183,8 @@ def _split(mons):
             if isinstance(v, dict):
                 dmg[m] = dmg.get(m, 0) + int(v.get("d", 0) or 0)
                 use[m] = use.get(m, 0) + int(v.get("u", 0) or 0)
+                if v.get("a"):
+                    dmg.zero[m] = dmg.zero.get(m, 0) + int(v["a"])
             else:
                 dmg[m] = dmg.get(m, 0) + int(v or 0)
                 use.setdefault(m, 0)
@@ -169,12 +196,28 @@ def _split(mons):
     return dmg, use
 
 
+class _Damage(dict):
+    """{pokemon: damage}, plus .zero: {pokemon: attacks that did no
+    damage}, for a game where the only attacking done did none."""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.zero = {}
+
+
 def _top_attacker(dmg):
-    """The Pokemon that dealt the most damage this game, if any did."""
+    """The Pokemon that dealt the most damage this game. If nothing did
+    any, the one that attacked most anyway -- Maushold's Gnaw Together
+    makes the other player discard and does no damage, but Maushold is
+    still what that deck attacks with."""
     if not dmg:
         return None
     best = max(dmg.items(), key=lambda kv: kv[1])
-    return best[0] if best[1] > 0 else None
+    if best[1] > 0:
+        return best[0]
+    zero = getattr(dmg, "zero", None) or {}
+    if zero:
+        return max(sorted(zero), key=lambda m: zero[m])
+    return None
 
 
 def build(sides):
@@ -342,7 +385,8 @@ def build(sides):
 def _new(key, ident, dmg, use=None):
     c = {"pool": set(ident), "members": [key], "counts": Counter(ident),
          "damage": Counter(), "attacked": Counter(), "attackers": set(),
-         "top_counts": Counter(), "uses": Counter()}
+         "top_counts": Counter(), "uses": Counter(),
+         "game_share": Counter(), "used_in": Counter()}
     _add_damage(c, dmg, use)
     return c
 
@@ -358,9 +402,18 @@ def _add_damage(c, dmg, use=None):
     for m, n in (use or {}).items():
         if n:
             c["uses"][m] += n
+            c["used_in"][m] += 1
+    game_total = sum(v for v in dmg.values() if v) or 1
     for m, v in dmg.items():
         if v:
             c["damage"][m] += v
+            c["attacked"][m] += 1
+            # its share of this game's damage, so that each game counts
+            # the same when picking a second name
+            c["game_share"][m] += v / game_total
+    # an attack that did no damage is still an attack
+    for m, n in (getattr(dmg, "zero", None) or {}).items():
+        if n and not dmg.get(m):
             c["attacked"][m] += 1
     top = _top_attacker(dmg)
     if top:
@@ -413,12 +466,23 @@ def _name_cluster(c, n):
     # deck than a Pokemon that landed one 60-damage attack, so uses and
     # damage are put on the same footing and the larger wins. A card
     # that is merely present every game earns nothing.
+    #
+    # Both are averaged per game, so every game counts the same. Adding
+    # up damage over all the games let one long game where a support
+    # Pokemon took over -- Reshiram doing 1,400 in a Charizard deck --
+    # outweigh several ordinary ones and rename the whole deck. And it
+    # has to have done the work in at least two games: one odd game is
+    # not what the deck is.
     best_second, best_strength = None, 0.0
     for card in c["counts"]:
         if card == primary or _same_line(primary, card):
             continue
-        damage_strength = (c["damage"].get(card, 0) / total_damage) / 0.25
-        use_strength = (c["uses"].get(card, 0) / n) / 2.0
+        damage_strength = 0.0
+        if c["attacked"].get(card, 0) >= 2:
+            damage_strength = (c["game_share"].get(card, 0) / n) / 0.25
+        use_strength = 0.0
+        if c["used_in"].get(card, 0) >= 2:
+            use_strength = (c["uses"].get(card, 0) / n) / 2.0
         strength = max(damage_strength, use_strength)
         if strength > best_strength:
             best_second, best_strength = card, strength
@@ -474,6 +538,17 @@ def pokemon_from_parse(d, side):
     for card in (d.get(f"{prefix}_cards") or {}):
         if " ex" in card or card.startswith("Mega ") or card.endswith(" V"):
             mons.add(card)
+    # and everything seen in play: a Pokemon on the Bench is a Pokemon
+    # even if it never did anything
+    mons |= set(d.get(f"{prefix}_in_play") or ())
     uses = dict(d.get(f"{prefix}_ability_uses") or {})
-    return {m: {"d": int(dmg.get(m, 0)), "u": int(uses.get(m, 0))}
-            for m in sorted(mons) if is_identity_card(m)}
+    zero = dict(d.get(f"{prefix}_zero_attacks") or {})
+    out = {}
+    for m in sorted(mons):
+        if not is_identity_card(m):
+            continue
+        v = {"d": int(dmg.get(m, 0)), "u": int(uses.get(m, 0))}
+        if zero.get(m):
+            v["a"] = int(zero[m])      # attacks that did no damage
+        out[m] = v
+    return out

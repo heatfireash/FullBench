@@ -6,14 +6,49 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.35.4"
+VERSION = "1.36.0"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
 DONATE_URL = "https://ko-fi.com/fullbench"
 DONATE_LABEL = "Support Full Bench on Ko-fi"
 
+# The Full Bench Discord, for bug reports and suggestions (About tab).
+DISCORD_URL = "https://discord.gg/9HHgfca4At"
+
 CHANGELOG = [
+    ("1.36.0", "2026-10-13", [
+        "The app is now signed, so Windows shows it as coming from a "
+        "known publisher instead of an unknown one.",
+        "The About tab has a link to the Full Bench Discord, for reporting "
+        "a bug or leaving a suggestion.",
+        "Deck names are better at telling decks apart. Every Pokemon seen "
+        "on the Bench or in the Active Spot now counts, not only the ones "
+        "that attacked, and an attack that does no damage (like "
+        "Maushold's Gnaw Together) counts as an attack. A game that "
+        "showed nothing but Maushold was being called Dragapult.",
+    ]),
+    ("1.35.7", "2026-10-05", [
+        "The Dashboard tab is now called My stats, the same as on "
+        "fullbench.gg.",
+    ]),
+    ("1.35.6", "2026-10-04", [
+        "Deck names no longer change once a game has one. Before, every "
+        "game's name was worked out again each time a new game came in, "
+        "so one new game could rename a whole deck's worth of older ones. "
+        "Now a game keeps the name it was given, and a new game takes the "
+        "name its deck already has. If a new kind of deck comes along, "
+        "like a Dragapult deck that adds Dudunsparce, its games get their "
+        "own name and your older Dragapult games stay Dragapult.",
+    ]),
+    ("1.35.5", "2026-10-04", [
+        "One unusual game no longer renames a deck. A Mega Charizard ex "
+        "deck where Reshiram took over in one long game was being renamed "
+        "\"Mega Charizard ex / Reshiram\", along with every other game of "
+        "that deck. A second name now has to earn it across the deck's "
+        "games, with each game counting the same, and in at least two of "
+        "them.",
+    ]),
     ("1.35.4", "2026-10-02", [
         "The first try at copying the battle log no longer misses. The app "
         "was clicking the copy icon while the log panel was still sliding "

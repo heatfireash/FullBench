@@ -2,7 +2,7 @@
 Full Bench -- desktop GUI.
 
 Tabs:
-  Dashboard  record and splits, filterable by which deck you played
+  My stats   record and splits, filterable by which deck you played
   Matches    every match, click one to see the cards both players showed
   Decks      your decks and matchup breakdown
   Activity   live status of the two watchers
@@ -22,14 +22,23 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import ttk, messagebox
 
+from look import semi, ui
+
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+
+MAC = sys.platform == "darwin"
+DEVICE = "Mac" if MAC else "PC"       # "safe on this PC"
 
 APP_NAME = "Full Bench"
 try:
     from version import VERSION, CHANGELOG, DONATE_URL, DONATE_LABEL
 except ImportError:
     VERSION, CHANGELOG, DONATE_URL, DONATE_LABEL = "0.0.0", [], "", ""
+try:
+    from version import DISCORD_URL
+except ImportError:
+    DISCORD_URL = ""
 DB_PATH = Path.home() / "ptcgl_matches.db"
 
 # Light theme. Blue and gold are kept for the header and for selection;
@@ -187,19 +196,36 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"{APP_NAME} {VERSION}")
+        if MAC:
+            # Tk on a Mac counts 72 points to the inch, Windows 96; without
+            # this every font is a quarter smaller against the same layout
+            self.tk.call("tk", "scaling", 96 / 72)
         self.geometry("1120x730")
         self.minsize(960, 620)
         self.configure(bg=SURFACE)
 
         try:
             ico = _asset("icon.ico")
-            if ico.exists():
+            if MAC:
+                # the built app has its own icon; from source, the Dock
+                # would show Python's
+                if not getattr(sys, "frozen", False):
+                    self._dock_icon = tk.PhotoImage(
+                        file=str(_asset("logo_small.png")))
+                    self.iconphoto(True, self._dock_icon)
+            elif ico.exists():
                 self.iconbitmap(str(ico))
         except Exception:
             pass
         # Tk gives Windows the 16px frame for everything, which the
         # taskbar stretches; replace it once the window exists.
         self.after(50, self._native_icon)
+        try:
+            # Tk 9 (a Mac's) sends two-finger trackpad scrolling as its
+            # own event; older Tk doesn't know it, and that's fine
+            self.bind_all("<TouchpadScroll>", self._touchpad, add="+")
+        except tk.TclError:
+            pass
 
         self.log_q = queue.Queue()
         self.stop_evt = None
@@ -370,7 +396,7 @@ class App(tk.Tk):
         s.configure("Big.TCombobox", fieldbackground="#ffffff",
                     background=PANEL, foreground=TEXT, arrowcolor=TEXT,
                     borderwidth=0, padding=(10, 8))
-        self.option_add("*TCombobox*Listbox.font", ("Segoe UI", 12))
+        self.option_add("*TCombobox*Listbox.font", ui(12))
         self.option_add("*TCombobox*Listbox.background", "#ffffff")
         self.option_add("*TCombobox*Listbox.foreground", TEXT)
         self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
@@ -396,9 +422,9 @@ class App(tk.Tk):
         title = tk.Frame(bar, bg=HEADER)
         title.pack(side="left", padx=10)
         tk.Label(title, text=APP_NAME, bg=HEADER, fg=HEADER_FG,
-                 font=("Segoe UI Semibold", 16)).pack(anchor="w")
+                 font=semi(16)).pack(anchor="w")
         self.status = tk.Label(title, text="\u25cf not tracking", bg=HEADER,
-                               fg="#a9b6da", font=("Segoe UI", 9))
+                               fg="#a9b6da", font=ui(9))
         self.status.pack(anchor="w")
 
         # Right side of the header: account state, and the tracking
@@ -413,7 +439,7 @@ class App(tk.Tk):
         self.acct = tk.Frame(bar, bg=HEADER)
         self.acct.pack(side="right")
         self.acct_label = tk.Label(self.acct, text="", bg=HEADER,
-                                   fg="#a9b6da", font=("Segoe UI", 10))
+                                   fg="#a9b6da", font=ui(10))
         self.btn_account = ttk.Button(self.acct, text="Sign in",
                                       command=self._cloud_browser_login)
         self.btn_cloud_sync = ttk.Button(self.acct, text="Sync",
@@ -435,7 +461,7 @@ class App(tk.Tk):
         self.tab_act = tk.Frame(nb, bg=SURFACE)
         self.tab_set = tk.Frame(nb, bg=SURFACE)
         self.tab_about = tk.Frame(nb, bg=SURFACE)
-        for t, n in ((self.tab_dash, "Dashboard"), (self.tab_matches, "Matches"),
+        for t, n in ((self.tab_dash, "My stats"), (self.tab_matches, "Matches"),
                      (self.tab_act, "Activity"),
                      (self.tab_set, "Settings"), (self.tab_about, "About")):
             nb.add(t, text=n)
@@ -453,10 +479,10 @@ class App(tk.Tk):
         head = tk.Frame(self.tab_dash, bg=SURFACE)
         head.pack(fill="x", pady=(14, 4))
         tk.Label(head, text="Deck", bg=SURFACE, fg=MUTED,
-                 font=("Segoe UI", 11)).pack(side="left", padx=(6, 8))
+                 font=ui(11)).pack(side="left", padx=(6, 8))
         self.deck_filter = ttk.Combobox(head, state="readonly", width=30,
                                         style="Big.TCombobox",
-                                        font=("Segoe UI", 13),
+                                        font=ui(13),
                                         values=["All decks"])
         self.deck_filter.set("All decks")
         self.deck_filter.pack(side="left")
@@ -464,7 +490,7 @@ class App(tk.Tk):
                               lambda e: self.refresh(keep=True))
 
         self.filter_note = tk.Label(head, text="", bg=SURFACE, fg=MUTED,
-                                    font=("Segoe UI", 9))
+                                    font=ui(9))
         self.filter_note.pack(side="left", padx=12)
 
         self.cards = tk.Frame(self.tab_dash, bg=SURFACE)
@@ -478,11 +504,11 @@ class App(tk.Tk):
             f.grid(row=0, column=i, padx=6, sticky="nsew", ipady=14)
             self.cards.grid_columnconfigure(i, weight=1)
             tk.Label(f, text=label.upper(), bg=PANEL, fg=MUTED,
-                     font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=16)
+                     font=ui(8, "bold")).pack(anchor="w", padx=16)
             v = tk.Label(f, text="--", bg=PANEL, fg=TEXT,
-                         font=("Segoe UI Semibold", 24))
+                         font=semi(24))
             v.pack(anchor="w", padx=16)
-            sub = tk.Label(f, text="", bg=PANEL, fg=MUTED, font=("Segoe UI", 9))
+            sub = tk.Label(f, text="", bg=PANEL, fg=MUTED, font=ui(9))
             sub.pack(anchor="w", padx=16)
             self.card_widgets[key] = (v, sub)
 
@@ -490,7 +516,7 @@ class App(tk.Tk):
         mid.pack(fill="both", expand=True, pady=6)
 
         tk.Label(mid, text="RECENT FORM", bg=SURFACE, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=6)
+                 font=ui(8, "bold")).pack(anchor="w", padx=6)
         self.form = tk.Frame(mid, bg=SURFACE)
         self.form.pack(anchor="w", padx=6, pady=(4, 14))
 
@@ -507,9 +533,9 @@ class App(tk.Tk):
             r = tk.Frame(grid, bg=SURFACE)
             r.grid(row=i % 3, column=i // 3, sticky="w", padx=(0, 52), pady=5)
             tk.Label(r, text=label, bg=SURFACE, fg=MUTED, width=36,
-                     anchor="w", font=("Segoe UI", 10)).pack(side="left")
+                     anchor="w", font=ui(10)).pack(side="left")
             v = tk.Label(r, text="--", bg=SURFACE, fg=TEXT,
-                         font=("Segoe UI Semibold", 11))
+                         font=semi(11))
             v.pack(side="left")
             self.stat_rows[key] = v
 
@@ -517,7 +543,7 @@ class App(tk.Tk):
         head2 = tk.Frame(mid, bg=SURFACE)
         head2.pack(fill="x", padx=6, pady=(18, 4))
         self.mu_title = tk.Label(head2, text="MATCHUPS", bg=SURFACE, fg=MUTED,
-                                 font=("Segoe UI", 8, "bold"))
+                                 font=ui(8, "bold"))
         self.mu_title.pack(side="left")
 
         self.mu_tree = ttk.Treeview(
@@ -562,15 +588,15 @@ class App(tk.Tk):
         ttk.Button(btns, text="View battle log", style="Go.TButton",
                    command=self._view_log).pack(side="left", padx=(0, 8))
         tk.Label(btns, text="or double-click a match",
-                 bg=SURFACE, fg=MUTED, font=("Segoe UI", 9)).pack(side="left")
+                 bg=SURFACE, fg=MUTED, font=ui(9)).pack(side="left")
         self._toast_lbl = tk.Label(left, text="", bg=SURFACE, fg=MUTED,
-                                   font=("Segoe UI", 9), anchor="w")
+                                   font=ui(9), anchor="w")
         self._toast_lbl.pack(fill="x", pady=(4, 0))
         pane.add(left, stretch="always")
 
         right = tk.Frame(pane, bg=SURFACE, width=380)
         tk.Label(right, text="CARDS SEEN", bg=SURFACE, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=10,
+                 font=ui(8, "bold")).pack(anchor="w", padx=10,
                                                     pady=(0, 4))
         self.detail = tk.Text(right, bg=PANEL, fg=TEXT, relief="flat",
                               font=("Consolas", 9), wrap="word", width=44,
@@ -592,6 +618,43 @@ class App(tk.Tk):
                         "Both decks are detected from the battle log "
                         "automatically.\n")
         self.act.configure(state="disabled")
+
+    def _touchpad(self, e):
+        """
+        Two-finger trackpad scrolling. Tk 9 delivers it as its own event,
+        which some widgets handle by themselves and others (the canvas
+        Settings and About scroll on) ignore. Whatever is under the
+        pointer and can scroll, and doesn't already, is scrolled by the
+        distance the fingers moved.
+        """
+        try:
+            dx, dy = (float(v) for v in self.tk.splitlist(
+                self.tk.call("tk::PreciseScrollDeltas", e.delta)))
+        except (tk.TclError, ValueError):
+            return
+        if not dy:
+            return
+        try:
+            w = self.winfo_containing(*self.winfo_pointerxy())
+        except (tk.TclError, KeyError):
+            return
+        while w is not None:
+            if hasattr(w, "yview") and callable(w.yview):
+                break
+            w = w.master
+        if w is None:
+            return
+        try:
+            for tag in w.bindtags():
+                if tag != "all" and "<TouchpadScroll>" in w.bind_class(tag):
+                    return               # it scrolls itself
+            first, last = (float(v) for v in w.yview())
+            if first <= 0 and last >= 1:
+                return                   # it all fits: nothing to scroll
+            total = w.winfo_height() / max(last - first, 1e-6)
+            w.yview_moveto(max(0.0, first - dy / total))
+        except (tk.TclError, ValueError, TypeError):
+            pass
 
     def _scrollable(self, parent):
         """
@@ -660,6 +723,10 @@ class App(tk.Tk):
 
         self.set_vars = {}
         opts = [
+            ("start_with_windows", "Start Full Bench when you log in",
+             "Adds Full Bench to your login items. You can also turn it "
+             "off in System Settings, under General > Login Items.")
+            if MAC else
             ("start_with_windows", "Start Full Bench when Windows starts",
              "Adds a per-user entry under Run in the registry. No admin "
              "rights needed, and you can also turn it off from Task "
@@ -715,18 +782,18 @@ class App(tk.Tk):
                 bg=SURFACE, fg=TEXT, selectcolor=PANEL,
                 activebackground=SURFACE, activeforeground=TEXT,
                 borderwidth=0, highlightthickness=0,
-                font=("Segoe UI", 10)).pack(anchor="w")
+                font=ui(10)).pack(anchor="w")
             tk.Label(wrap, text=blurb, bg=SURFACE, fg=MUTED,
-                     font=("Segoe UI", 9), wraplength=680,
+                     font=ui(9), wraplength=680,
                      justify="left").pack(anchor="w", padx=26, pady=(0, 8))
 
         self.set_note = tk.Label(wrap, text="", bg=SURFACE, fg=MUTED,
-                                 font=("Segoe UI", 9))
+                                 font=ui(9))
         self.set_note.pack(anchor="w", pady=(10, 0))
 
         # --- cloud sync
         tk.Label(wrap, text="CLOUD SYNC", bg=SURFACE, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(22, 4))
+                 font=ui(8, "bold")).pack(anchor="w", pady=(22, 4))
         tk.Label(wrap,
                  text="Optional. Sign in and your history is kept in your "
                       "account, so two PCs share one record and nothing is "
@@ -734,7 +801,7 @@ class App(tk.Tk):
                       "towards the deck statistics on fullbench.gg \u2014 "
                       "counts by deck only, never player names, yours or "
                       "your opponents'.",
-                 bg=SURFACE, fg=MUTED, font=("Segoe UI", 9), wraplength=700,
+                 bg=SURFACE, fg=MUTED, font=ui(9), wraplength=700,
                  justify="left").pack(anchor="w", pady=(0, 10))
 
         self.cloud_btns = tk.Frame(wrap, bg=SURFACE)
@@ -761,11 +828,11 @@ class App(tk.Tk):
             command=lambda: self._on_setting("cloud_auto_sync"),
             bg=SURFACE, fg=TEXT, selectcolor=PANEL, activebackground=SURFACE,
             activeforeground=TEXT, borderwidth=0, highlightthickness=0,
-            font=("Segoe UI", 10))
+            font=ui(10))
         self.chk_auto.pack(anchor="w", pady=(10, 0))
 
         self.cloud_note = tk.Label(wrap, text="", bg=SURFACE, fg=MUTED,
-                                   font=("Segoe UI", 9), wraplength=700,
+                                   font=ui(9), wraplength=700,
                                    justify="left")
         self.cloud_note.pack(anchor="w", pady=(8, 0))
         self._cloud_state()
@@ -773,9 +840,9 @@ class App(tk.Tk):
             self.cloud_note.configure(text=self._signed_in_text(), fg=MUTED)
 
         tk.Label(wrap, text="GAME", bg=SURFACE, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(18, 4))
+                 font=ui(8, "bold")).pack(anchor="w", pady=(18, 4))
         self.game_lbl = tk.Label(wrap, text="checking...", bg=SURFACE,
-                                 fg=MUTED, font=("Segoe UI", 10))
+                                 fg=MUTED, font=ui(10))
         self.game_lbl.pack(anchor="w")
 
         # keep the checkbox honest if the registry says otherwise
@@ -834,13 +901,13 @@ class App(tk.Tk):
         head = tk.Frame(wrap, bg=SURFACE)
         head.pack(fill="x")
         tk.Label(head, text=APP_NAME, bg=SURFACE, fg=TEXT,
-                 font=("Segoe UI Semibold", 15)).pack(side="left")
+                 font=semi(15)).pack(side="left")
         tk.Label(head, text=f"version {VERSION}", bg=SURFACE, fg=HEADER,
-                 font=("Segoe UI", 10)).pack(side="left", padx=10)
+                 font=ui(10)).pack(side="left", padx=10)
 
         tk.Label(wrap, text="Stat tracker for Pokemon TCG Live, built from "
                             "the post-match battle log.",
-                 bg=SURFACE, fg=MUTED, font=("Segoe UI", 10),
+                 bg=SURFACE, fg=MUTED, font=ui(10),
                  wraplength=760, justify="left").pack(anchor="w", pady=(4, 8))
 
         if DONATE_URL:
@@ -849,15 +916,28 @@ class App(tk.Tk):
             sup.pack(anchor="w", fill="x", pady=(0, 12))
             tk.Label(sup, text="Full Bench is free and will stay free. If "
                                "it's useful, a small tip covers the server.",
-                     bg=PANEL, fg=TEXT, font=("Segoe UI", 10),
+                     bg=PANEL, fg=TEXT, font=ui(10),
                      wraplength=560, justify="left").pack(side="left",
                                                          padx=14, pady=10)
             ttk.Button(sup, text=DONATE_LABEL, style="Go.TButton",
                        command=lambda: __import__("webbrowser").open(
                            DONATE_URL)).pack(side="right", padx=14, pady=8)
 
+        if DISCORD_URL:
+            dc = tk.Frame(wrap, bg=PANEL, highlightbackground=LINE,
+                          highlightthickness=1)
+            dc.pack(anchor="w", fill="x", pady=(0, 12))
+            tk.Label(dc, text="Found a bug, or have an idea for Full Bench? "
+                              "Tell us on Discord.",
+                     bg=PANEL, fg=TEXT, font=ui(10),
+                     wraplength=560, justify="left").pack(side="left",
+                                                         padx=14, pady=10)
+            ttk.Button(dc, text="Report a bug or leave a suggestion",
+                       command=lambda: __import__("webbrowser").open(
+                           DISCORD_URL)).pack(side="right", padx=14, pady=8)
+
         tk.Label(wrap, text="CHANGELOG", bg=SURFACE, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w")
+                 font=ui(8, "bold")).pack(anchor="w")
 
         inner = tk.Frame(wrap, bg=SURFACE)
         inner.pack(fill="both", expand=True, pady=(6, 0))
@@ -868,17 +948,17 @@ class App(tk.Tk):
             row = tk.Frame(inner, bg=SURFACE)
             row.pack(fill="x", anchor="w", pady=(10, 2))
             tk.Label(row, text=ver, bg=SURFACE, fg=HEADER,
-                     font=("Segoe UI Semibold", 11)).pack(side="left")
+                     font=semi(11)).pack(side="left")
             tk.Label(row, text=date, bg=SURFACE, fg=MUTED,
-                     font=("Segoe UI", 9)).pack(side="left", padx=8)
+                     font=ui(9)).pack(side="left", padx=8)
             for n in notes:
                 tk.Label(inner, text="\u2022  " + n, bg=SURFACE, fg=MUTED,
-                         font=("Segoe UI", 9), wraplength=740,
+                         font=ui(9), wraplength=740,
                          justify="left").pack(anchor="w", padx=10, pady=1)
         if len(CHANGELOG) > 5:
             older = tk.Label(inner, text="Older versions: see the releases "
                              "on GitHub", bg=SURFACE, fg=HEADER,
-                             font=("Segoe UI", 9, "underline"),
+                             font=ui(9, "underline"),
                              cursor="hand2")
             older.pack(anchor="w", pady=(10, 0))
             older.bind("<Button-1>", lambda e: __import__("webbrowser").open(
@@ -886,7 +966,7 @@ class App(tk.Tk):
 
         tk.Label(wrap, text="Not produced by, endorsed by, or affiliated "
                             "with Pokemon, Nintendo, Game Freak or Creatures.",
-                 bg=SURFACE, fg=MUTED, font=("Segoe UI", 8),
+                 bg=SURFACE, fg=MUTED, font=ui(8),
                  wraplength=760, justify="left").pack(anchor="w", pady=(12, 0))
 
     def _set_status_line(self):
@@ -1182,10 +1262,10 @@ class App(tk.Tk):
         head.pack(fill="x")
         tk.Label(head, text=f"Full Bench {info['latest']} is out",
                  bg=HEADER, fg=HEADER_FG,
-                 font=("Segoe UI Semibold", 13)).pack(anchor="w", padx=18,
+                 font=semi(13)).pack(anchor="w", padx=18,
                                                       pady=(14, 0))
         tk.Label(head, text=f"You have {VERSION}", bg=HEADER, fg="#a9b6da",
-                 font=("Segoe UI", 9)).pack(anchor="w", padx=18,
+                 font=ui(9)).pack(anchor="w", padx=18,
                                             pady=(0, 12))
         tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
 
@@ -1195,7 +1275,7 @@ class App(tk.Tk):
 
         if info["must"]:
             text = ("Syncing is paused until you update. Your matches are "
-                    "safe on this PC - they'll all upload once the new "
+                    f"safe on this {DEVICE} - they'll all upload once the new "
                     "version is running.\n\nTracking keeps working in the "
                     "meantime.")
         else:
@@ -1205,11 +1285,15 @@ class App(tk.Tk):
             text += ("\n\nUpdate now downloads it and restarts Full Bench "
                      "- about a minute. Your matches and settings are kept.")
         else:
-            text += ("\n\nTo update: download it, close Full Bench, and "
+            text += ("\n\nTo update: download it, quit Full Bench, and "
+                     "drag the new Full Bench into Applications, replacing "
+                     "the old one. Your matches and settings are kept."
+                     if MAC else
+                     "\n\nTo update: download it, close Full Bench, and "
                      "replace your old FullBench.exe with the new one. Your "
                      "matches and settings are kept.")
         msg = tk.Label(dlg, text=text, bg=SURFACE, fg=TEXT,
-                       font=("Segoe UI", 10), wraplength=400, justify="left")
+                       font=ui(10), wraplength=400, justify="left")
         msg.pack(anchor="w", padx=18, pady=(14, 6))
         bar = ttk.Progressbar(dlg, mode="determinate", length=400,
                               maximum=100)
@@ -1289,7 +1373,7 @@ class App(tk.Tk):
             bar.pack_forget()
             msg.configure(text=f"The update didn't work: {why}.\n\n"
                                f"You can still get it from the download "
-                               f"page. Nothing on this PC was changed.")
+                               f"page. Nothing on this {DEVICE} was changed.")
             later_btn.configure(text="Close")
             later_btn.state(["!disabled"])
             page_btn.state(["!disabled"])
@@ -1449,6 +1533,82 @@ class App(tk.Tk):
             self.status.configure(
                 text=f"\u25cf {text} - tick Developer mode for detail")
 
+    # ---- macOS permissions
+    def _mac_permissions(self):
+        """
+        macOS asks the user before an app may see another app's window
+        (Screen Recording) or click for you (Accessibility). Without both
+        the automatic copy can't work; a battle log you copy yourself is
+        still recorded. Raises PermissionError naming what's missing.
+        """
+        import mac_platform
+        screen = mac_platform.screen_access()
+        clicks = mac_platform.input_access()
+        if screen and clicks:
+            return
+        if not getattr(self, "_mac_asked", False):
+            self._mac_asked = True
+            # macOS's own requests, then a window saying what they're for
+            if not screen:
+                mac_platform.screen_access(ask=True)
+            if not clicks:
+                mac_platform.input_access(ask=True)
+            self.after(700, lambda: self._mac_permission_window(screen,
+                                                                 clicks))
+        missing = [n for n, ok in (("Screen Recording", screen),
+                                   ("Accessibility", clicks)) if not ok]
+        both = len(missing) > 1
+        raise PermissionError(
+            " and ".join(missing) + (" aren't" if both else " isn't")
+            + " allowed yet. Turn " + ("them" if both else "it") + " on in "
+            "System Settings > Privacy & Security, then quit and reopen "
+            "Full Bench.")
+
+    def _mac_permission_window(self, screen, clicks):
+        import mac_platform
+        dlg = tk.Toplevel(self)
+        dlg.title("Full Bench needs your OK")
+        dlg.configure(bg=SURFACE)
+        dlg.resizable(False, False)
+        head = tk.Frame(dlg, bg=HEADER)
+        head.pack(fill="x")
+        tk.Label(head, text=("Two things to allow in System Settings"
+                             if not (screen or clicks) else
+                             "One thing to allow in System Settings"),
+                 bg=HEADER, fg="white", font=semi(13)).pack(
+            anchor="w", padx=18, pady=(14, 12))
+        tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
+        rows = [
+            ("Screen Recording", screen, "screen",
+             "So Full Bench can see the result screen. It only looks at "
+             "the Pokémon TCG Live window, and nothing it sees is saved "
+             "or sent anywhere."),
+            ("Accessibility", clicks, "input",
+             "So Full Bench can click Battle Log and the copy icon for "
+             "you at the end of a match."),
+        ]
+        for name, ok, which, why in rows:
+            row = tk.Frame(dlg, bg=SURFACE)
+            row.pack(fill="x", padx=18, pady=(14, 0))
+            tk.Label(row, text=("\u2713 " if ok else "") + name, bg=SURFACE,
+                     fg=TEXT, font=semi(11)).pack(anchor="w")
+            tk.Label(row, text="Allowed" if ok else why, bg=SURFACE,
+                     fg=MUTED, font=ui(9), wraplength=420,
+                     justify="left").pack(anchor="w")
+            if not ok:
+                ttk.Button(row, text="Open System Settings",
+                           command=lambda w=which: mac_platform.open_settings(w)
+                           ).pack(anchor="w", pady=(6, 0))
+        tk.Label(dlg, text="Turn on Full Bench in each list, then quit and "
+                           "reopen Full Bench. Until then, a battle log you "
+                           "copy yourself is still recorded.",
+                 bg=SURFACE, fg=MUTED, font=ui(9), wraplength=420,
+                 justify="left").pack(anchor="w", padx=18, pady=(16, 0))
+        ttk.Button(dlg, text="Close", command=dlg.destroy).pack(
+            anchor="e", padx=18, pady=14)
+        dlg.transient(self)
+        dlg.lift()
+
     def toggle(self):
         if self.stop_evt:
             self.stop_evt.set()
@@ -1529,6 +1689,8 @@ class App(tk.Tk):
                 self.prompt.saved()
 
         try:
+            if MAC:
+                self._mac_permissions()
             import autocopy
             autocopy.load_templates()
             threading.Thread(target=wrap(
@@ -1543,6 +1705,8 @@ class App(tk.Tk):
             self.log(f"auto-copy off: {e}")
         except ImportError as e:
             self.log(f"auto-copy off, missing package: {e.name}")
+        except PermissionError as e:
+            self.log(f"auto-copy off: {e}")
 
         self.btn.configure(text="Stop tracking")
         self._set_status_line()
@@ -1659,7 +1823,7 @@ class App(tk.Tk):
             tw.overrideredirect(True)
             tw.attributes("-topmost", True)
             tk.Label(tw, text=text, bg=PANEL, fg=TEXT, padx=8, pady=4,
-                     font=("Segoe UI", 9)).pack()
+                     font=ui(9)).pack()
             x = widget.winfo_rootx()
             y = widget.winfo_rooty() + widget.winfo_height() + 4
             tw.geometry(f"+{x}+{y}")
@@ -1705,7 +1869,7 @@ class App(tk.Tk):
 
         token = self.cfg.get("cloud_token")
         if not token:
-            self._toast("This match's log isn't on this PC. Sign in to "
+            self._toast(f"This match's log isn't on this {DEVICE}. Sign in to "
                         "fetch it from your account.")
             return
         self._toast("fetching the log from your account…")
@@ -1718,7 +1882,7 @@ class App(tk.Tk):
                 if text:
                     self._log_window(r, text, anonymised=True)
                 else:
-                    self._toast("No log for this match on this PC or in "
+                    self._toast(f"No log for this match on this {DEVICE} or in "
                                 "your account.")
             self.after(0, done)
 
@@ -1750,7 +1914,7 @@ class App(tk.Tk):
         tk.Label(head, text=f"{result}   {r['deck_label'] or 'unknown'}  vs  "
                             f"{r['opponent_archetype'] or 'unknown'}",
                  bg=HEADER, fg=HEADER_FG,
-                 font=("Segoe UI Semibold", 13)).pack(anchor="w", padx=16,
+                 font=semi(13)).pack(anchor="w", padx=16,
                                                       pady=(12, 0))
         order = {1: "went first", 0: "went second"}.get(r["went_first"], "")
         sub = "  ·  ".join(x for x in (
@@ -1761,37 +1925,37 @@ class App(tk.Tk):
         if anonymised:
             sub += "  ·  from your account"
         tk.Label(head, text=sub, bg=HEADER, fg="#a9b6da",
-                 font=("Segoe UI", 9)).pack(anchor="w", padx=16,
+                 font=ui(9)).pack(anchor="w", padx=16,
                                             pady=(0, 12))
         tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
 
         frame = tk.Frame(dlg, bg=SURFACE)
         frame.pack(fill="both", expand=True, padx=16, pady=(12, 4))
         body = tk.Text(frame, bg="#ffffff", fg=TEXT, relief="flat",
-                       font=("Segoe UI", 10), wrap="word", padx=14, pady=10,
+                       font=ui(10), wrap="word", padx=14, pady=10,
                        spacing1=1, spacing3=1)
         bar = ttk.Scrollbar(frame, orient="vertical", command=body.yview)
         body.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
         body.pack(side="left", fill="both", expand=True)
 
-        body.tag_configure("turn", font=("Segoe UI Semibold", 10),
+        body.tag_configure("turn", font=semi(10),
                            foreground=MUTED, spacing1=10, spacing3=3)
-        body.tag_configure("turn_you", font=("Segoe UI Semibold", 10),
+        body.tag_configure("turn_you", font=semi(10),
                            foreground=HEADER, spacing1=10, spacing3=3)
-        body.tag_configure("turn_opp", font=("Segoe UI Semibold", 10),
+        body.tag_configure("turn_opp", font=semi(10),
                            foreground=MUTED, spacing1=10, spacing3=3)
         body.tag_configure("you", foreground=TEXT)
         body.tag_configure("opp", foreground="#3d4766")
         body.tag_configure("line", foreground=TEXT)
         body.tag_configure("detail", foreground=MUTED, lmargin1=18,
-                           lmargin2=18, font=("Segoe UI", 9))
+                           lmargin2=18, font=ui(9))
         body.tag_configure("cards", foreground=MUTED, lmargin1=30,
-                           lmargin2=30, font=("Segoe UI", 9, "italic"))
+                           lmargin2=30, font=ui(9, "italic"))
         body.tag_configure("win", foreground=WIN,
-                           font=("Segoe UI Semibold", 10))
+                           font=semi(10))
         body.tag_configure("loss", foreground=LOSS,
-                           font=("Segoe UI Semibold", 10))
+                           font=semi(10))
 
         turn_no = 0
         for kind, t in lines:
@@ -1809,7 +1973,7 @@ class App(tk.Tk):
         body.configure(state="disabled")
 
         note = tk.Label(dlg, text="", bg=SURFACE, fg=MUTED,
-                        font=("Segoe UI", 9))
+                        font=ui(9))
         note.pack(anchor="w", padx=16)
 
         def copy_log():
@@ -1826,8 +1990,12 @@ class App(tk.Tk):
         if path is not None:
             def open_file():
                 try:
-                    import os
-                    os.startfile(str(path))       # Windows: default editor
+                    if MAC:
+                        import subprocess
+                        subprocess.Popen(["open", str(path)])
+                    else:
+                        import os
+                        os.startfile(str(path))   # Windows: default editor
                 except Exception as e:
                     note.configure(text=f"couldn't open it: {e}", fg=LOSS)
             ttk.Button(row, text="Open file", command=open_file).pack(
