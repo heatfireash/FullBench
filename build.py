@@ -29,7 +29,8 @@ REQUIRED = ["ptcgl_gui.py", "ptcgl_tracker.py", "ptcgl_parse.py", "overlay.py",
             "cloud.py", "archetypes.py", "archetypes.json", "cluster.py",
             "updater.py", "evolutions.py", "app_paths.py", "look.py",
             "battlelog_button.png", "copy_button.png", "continue_button.png",
-            "icon.ico", "logo_small.png"]
+            "icon.ico", "logo_small.png", "welcome.py",
+            "gate_replays.png", "gate_stats.png", "gate_devices.png", "gate_meta.png"]
 
 
 # ------------------------------------------------------------ signing
@@ -200,13 +201,13 @@ def main():
     # templates must travel with the exe
     for png in ("battlelog_button.png", "copy_button.png",
                 "continue_button.png", "logo_small.png", "icon.ico",
-                "archetypes.json"):
+                "archetypes.json", "gate_replays.png", "gate_stats.png", "gate_devices.png", "gate_meta.png"):
         args += ["--add-data", f"{png}{sep}."]
     # our own modules, imported dynamically at runtime
     for mod in ("ptcgl_tracker", "ptcgl_parse", "autocopy", "ptcgl_stats",
                 "overlay", "settings", "game_watch", "version",
                 "cloud", "archetypes", "cluster", "updater", "evolutions",
-                "app_paths", "look"):
+                "app_paths", "look", "welcome"):
         args += ["--hidden-import", mod]
     # the Mac half of the app has no business in the Windows exe
     args += ["--exclude-module", "mac_platform"]

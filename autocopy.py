@@ -10,6 +10,8 @@ the game process.
 
 Install:
     pip install mss opencv-python-headless numpy pygetwindow pydirectinput
+On a Mac, mac_platform.py does the window, capture and click parts
+instead (see its docstring for the pyobjc packages).
 
 Screen captures are only ever held in memory, to find the buttons, and
 are never saved or sent anywhere.
@@ -28,9 +30,18 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import mss
-import pygetwindow as gw
-import pydirectinput
+
+import app_paths
+
+MAC = sys.platform == "darwin"
+if MAC:
+    # the window, capture and clicks go through macOS instead
+    import mac_platform
+    mss = gw = pydirectinput = None
+else:
+    import mss
+    import pygetwindow as gw
+    import pydirectinput
 
 
 def _set_dpi_aware():
@@ -73,9 +84,9 @@ def _bundle_dir():
 
 
 def _asset(name):
-    """Prefer a file next to the exe (user re-crop) over the bundled one."""
-    beside = Path(sys.executable).parent / name if getattr(sys, "frozen", False) \
-        else Path(__file__).parent / name
+    """Prefer a file next to the exe (user re-crop) over the bundled one.
+    (On a Mac app, "next to the exe" is Application Support.)"""
+    beside = app_paths.user_dir() / name
     return beside if beside.exists() else _bundle_dir() / name
 
 
@@ -84,9 +95,12 @@ TEMPLATE = _asset("battlelog_button.png")
 COPY_TEMPLATE = _asset("copy_button.png")
 CONTINUE_TEMPLATE = _asset("continue_button.png")
 # calibration is user data -- always beside the exe, never in the bundle
-CALIB = (Path(sys.executable).parent if getattr(sys, "frozen", False)
-         else Path(__file__).parent) / "calibration.json"
+CALIB = app_paths.user_dir() / "calibration.json"
+# where the copy icon was last found, as fractions of the window, so the
+# pointer can be parked there before the icon has even appeared
+COPY_SPOT = app_paths.user_dir() / "copy_spot.json"
 COOLDOWN_S = 20          # don't re-fire on the same result screen
+COVER_GONE_S = 0.2       # time for the Battle Log cover to come down
 POLL_S = 0.10            # how often to look for the result screen
 # The result screen can be left and returned to -- clicking Battle Log
 # and closing it again, or tabbing away. Re-arming the moment it
@@ -109,13 +123,40 @@ BUTTON_REGION = (0.28, 0.68, 0.72, 1.00)
 CONTINUE_SHIELD_REGION = (0.34, 0.885, 0.66, 1.00)
 
 
-def shield_rect(win):
-    """Screen-coordinate rect covering the Continue button."""
+def game_area(win, frame=None):
+    """
+    (left, top, width, height) of the part of the window the game draws
+    in. Full screen on a Mac, the screen is taller than the game's 16:9
+    once the menu bar is left out, so the game adds black bars above and
+    below and the buttons sit inside them. Those bars are read off the
+    picture: only rows that are black all the way across, the same
+    thickness top and bottom. A windowed game has none, and on Windows
+    the window has always been the game, so both are left as they are.
+    """
+    left, top, w, h = win.left, win.top, win.width, win.height
+    if not MAC or frame is None or frame.size == 0:
+        return left, top, w, h
+    fh = frame.shape[0]
+    dark = frame.max(axis=2).max(axis=1) < 16
+    if dark.all():
+        return left, top, w, h
+    t = int(np.argmin(dark))
+    b = int(np.argmin(dark[::-1]))
+    if min(t, b) < fh * 0.02 or abs(t - b) > fh * 0.02:
+        return left, top, w, h
+    k = h / fh                              # picture rows -> points
+    return left, top + round(t * k), w, h - round((t + b) * k)
+
+
+def shield_rect(win, frame=None):
+    """Screen-coordinate rect covering the Continue button. `frame`, a
+    picture of the window, lets it allow for full-screen black bars."""
     x0, y0, x1, y1 = CONTINUE_SHIELD_REGION
-    return (win.left + int(win.width * x0),
-            win.top + int(win.height * y0),
-            int(win.width * (x1 - x0)),
-            int(win.height * (y1 - y0)))
+    left, top, w, h = game_area(win, frame)
+    return (left + int(w * x0),
+            top + int(h * y0),
+            int(w * (x1 - x0)),
+            int(h * (y1 - y0)))
 PANEL_TIMEOUT_S = 3.0    # max wait for the battle log panel to render
 CLIPBOARD_TIMEOUT_S = 3.0  # max wait for the copy to land
 # The copy icon shows while the panel is still sliding in, before the game
@@ -140,8 +181,10 @@ MANUAL_WAIT_S = 20
 # being matched at 1080p (~0.5x) and the reverse (~2x), plus UI scaling.
 SCALE_MIN = 0.35
 SCALE_MAX = 2.00
-SCALE_STEP = 1.06        # 6% apart -- fine enough not to miss a peak
+SCALE_STEP = 1.06        # 6% apart (a small button's peak can fall between)
 SCALE_STEPS = 32
+# when nothing in the sweep is good enough: the sizes in between
+REFINE_FACTORS = (0.97, 0.98, 0.99, 1.01, 1.02, 1.03)
 WORK_SCALE = 0.5         # match at half res; ~4x faster, same hits
 
 MATCH_THRESHOLD = 0.78       # accept
@@ -178,7 +221,18 @@ def grab(win, region=None):
 
     Grabbing a strip instead of the whole window is far cheaper, which
     matters because this runs several times a second while you play.
+
+    On a Mac the window comes from macOS's own capture of it, which is
+    already up to date, and the strip is cut from that.
     """
+    if MAC:
+        img = mac_platform.grab(win)
+        if region:
+            h, w = img.shape[:2]
+            x0, y0, x1, y1 = region
+            img = img[int(h * y0):int(h * y0) + max(1, int(h * (y1 - y0))),
+                      int(w * x0):int(w * x0) + max(1, int(w * (x1 - x0)))]
+        return img
     left, top, width, height = win.left, win.top, win.width, win.height
     if region:
         x0, y0, x1, y1 = region
@@ -212,23 +266,55 @@ def continue_colour_present(win):
     return float(gold.mean()) >= CONTINUE_COLOUR_MIN
 
 
-def _scan(frame_g, template_g, scales, work_scale):
-    """Best match over the given scales. Returns (centre_xy, score, scale)."""
-    best = (None, 0.0, None)
+def _half(img):
+    """
+    Half size, each 2x2 block averaged: what OpenCV's INTER_AREA does for
+    a picture with even sides, done by hand so it's the same everywhere.
+    OpenCV on a Mac shrinks a picture with an odd side differently (a
+    slightly shifted, softer result), and that alone dropped the Battle
+    Log button's score there from 0.86 to 0.67. An odd last row or column
+    is left out.
+    """
+    h, w = img.shape[:2]
+    h2, w2 = h // 2, w // 2
+    if h2 == 0 or w2 == 0:
+        return img
+    blocks = img[:h2 * 2, :w2 * 2].astype(np.uint16).reshape(h2, 2, w2, 2)
+    return ((blocks.sum(axis=(1, 3)) + 2) >> 2).astype(np.uint8)
+
+
+def _scan_all(frame_g, template_g, scales, work_scale):
+    """The best spot at each of the given scales:
+    [(centre_xy, score, scale), ...]."""
     fh, fw = frame_g.shape[:2]
+    sized = []
     for s in scales:
         t = cv2.resize(template_g, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
         th, tw = t.shape[:2]
         if th < 8 or tw < 8 or th > fh or tw > fw:
             continue
+        sized.append((s, t))
+    if not sized:
+        return []
+    found = []
+    for s, t in sized:
+        th, tw = t.shape[:2]
         res = cv2.matchTemplate(frame_g, t, cv2.TM_CCOEFF_NORMED)
+        if not np.isfinite(res).all():
+            # OpenCV on Apple silicon has been seen to give NaN here
+            res = np.nan_to_num(res, nan=0.0, posinf=0.0, neginf=0.0)
         _, score, _, loc = cv2.minMaxLoc(res)
-        if score > best[1]:
-            # map back to full-resolution window coordinates
-            cx = (loc[0] + tw / 2) / work_scale
-            cy = (loc[1] + th / 2) / work_scale
-            best = ((int(cx), int(cy)), score, s)
-    return best
+        # map back to full-resolution window coordinates
+        cx = (loc[0] + tw / 2) / work_scale
+        cy = (loc[1] + th / 2) / work_scale
+        found.append(((int(cx), int(cy)), score, s))
+    return found
+
+
+def _scan(frame_g, template_g, scales, work_scale):
+    """Best match over the given scales. Returns (centre_xy, score, scale)."""
+    return max(_scan_all(frame_g, template_g, scales, work_scale),
+               key=lambda r: r[1], default=(None, 0.0, None))
 
 
 def locate(frame, template, expected_scale=None, threshold=None, region=None):
@@ -256,11 +342,14 @@ def locate(frame, template, expected_scale=None, threshold=None, region=None):
 
     work_scale = WORK_SCALE
     frame_g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame_g = cv2.resize(frame_g, None, fx=work_scale, fy=work_scale,
-                         interpolation=cv2.INTER_AREA)
     template_g = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    template_g = cv2.resize(template_g, None, fx=work_scale, fy=work_scale,
-                            interpolation=cv2.INTER_AREA)
+    if work_scale == 0.5:
+        frame_g, template_g = _half(frame_g), _half(template_g)
+    else:
+        frame_g = cv2.resize(frame_g, None, fx=work_scale, fy=work_scale,
+                             interpolation=cv2.INTER_AREA)
+        template_g = cv2.resize(template_g, None, fx=work_scale,
+                                fy=work_scale, interpolation=cv2.INTER_AREA)
 
     # fast path: narrow band around the predicted scale
     if expected_scale:
@@ -275,7 +364,20 @@ def locate(frame, template, expected_scale=None, threshold=None, region=None):
     sweep = [round(SCALE_MIN * (SCALE_STEP ** i), 4)
              for i in range(SCALE_STEPS)]
     sweep = [s for s in sweep if s <= SCALE_MAX]
-    xy, score, s = _scan(frame_g, template_g, sweep, work_scale)
+    found = _scan_all(frame_g, template_g, sweep, work_scale)
+    xy, score, s = max(found, key=lambda r: r[1], default=(None, 0.0, None))
+    if score < threshold and found:
+        # The sweep's sizes are 6% apart. A small button (a small window,
+        # or a Retina picture shrunk to points) can match well only within
+        # a percent or two of its real size, which may fall between two of
+        # them. So before giving up, try the sizes between, around the
+        # best two.
+        near = sorted(found, key=lambda r: -r[1])[:2]
+        between = sorted({round(r[2] * f, 4) for r in near
+                          for f in REFINE_FACTORS})
+        xy, score, s = max([(xy, score, s)]
+                           + _scan_all(frame_g, template_g, between, work_scale),
+                           key=lambda r: r[1])
     if score >= threshold:
         return (xy[0] + off_x, xy[1] + off_y), score
     return None, score
@@ -348,6 +450,9 @@ def _click(win, xy):
     hold is about a tenth of a second.
     """
     x, y = win.left + xy[0], win.top + xy[1]
+    if MAC:
+        mac_platform.click(x, y, pid=getattr(win, "pid", None))
+        return
     rect = (win.left, win.top, win.left + win.width, win.top + win.height)
     # Move first, as a real mouse move the game sees, and give it a few
     # frames to notice the pointer is over the button. Pinning first
@@ -368,6 +473,76 @@ def _click(win, xy):
         time.sleep(0.05)
 
 
+def _load_copy_spot():
+    """Where the copy icon was last seen, (fx, fy) as window fractions, or
+    None before the first capture."""
+    try:
+        d = json.loads(COPY_SPOT.read_text())
+        fx, fy = float(d["fx"]), float(d["fy"])
+        if 0.0 < fx < 1.0 and 0.0 < fy < 1.0:
+            return fx, fy
+    except Exception:
+        pass
+    return None
+
+
+def _save_copy_spot(win, xy):
+    """Remember where the copy icon is, for next time."""
+    try:
+        fx, fy = xy[0] / win.width, xy[1] / win.height
+        if not (0.0 < fx < 1.0 and 0.0 < fy < 1.0):
+            return
+        old = _load_copy_spot()
+        if old and abs(old[0] - fx) < 0.003 and abs(old[1] - fy) < 0.003:
+            return
+        COPY_SPOT.write_text(json.dumps({"fx": round(fx, 4),
+                                         "fy": round(fy, 4)}))
+    except Exception:
+        pass
+
+
+def _move_pointer(win, xy):
+    """Put the pointer at a point in the game window. Only moves it; no
+    click."""
+    x, y = win.left + xy[0], win.top + xy[1]
+    try:
+        if MAC:
+            mac_platform.move(x, y)
+        else:
+            pydirectinput.moveTo(int(x), int(y), _pause=False)
+    except Exception:
+        pass
+
+
+def _park_on_copy_spot(win):
+    """
+    Right after Battle Log is clicked, take the pointer off that button and
+    put it where the copy icon will be. A player clicking again and again
+    as the log slides in would otherwise click Battle Log a second time,
+    which closes it. Where the icon goes is only known once it has been
+    found once, so the very first capture relies on the cover alone.
+    """
+    spot = _load_copy_spot()
+    if not spot:
+        return False
+    _move_pointer(win, (int(spot[0] * win.width), int(spot[1] * win.height)))
+    return True
+
+
+def log_button_rect(win, xy, template, expected=None):
+    """Screen rect (x, y, w, h) around the Battle Log button found at xy
+    (window coordinates), a little bigger than the button itself, kept
+    inside the window."""
+    f = expected or 1.0
+    th, tw = template.shape[:2]
+    w, h = int(tw * f * 1.3), int(th * f * 1.3)
+    x = max(0, int(xy[0] - w / 2))
+    y = max(0, int(xy[1] - h / 2))
+    w = min(w, win.width - x)
+    h = min(h, win.height - y)
+    return (win.left + x, win.top + y, w, h)
+
+
 def _clipboard():
     try:
         import pyperclip
@@ -379,8 +554,11 @@ def _clipboard():
 def _clip_seq():
     """
     Windows' clipboard counter: it goes up every time anything is copied,
-    even the exact same text again. None where it isn't available.
+    even the exact same text again. None where it isn't available. A Mac
+    has the same thing (the pasteboard's change count).
     """
+    if MAC:
+        return mac_platform.clipboard_count()
     try:
         import ctypes
         return int(ctypes.windll.user32.GetClipboardSequenceNumber())
@@ -417,7 +595,7 @@ def _is_new_log(cur, before):
 
 
 def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
-            on_status=None, before=None):
+            on_status=None, before=None, on_cover=None, template=None):
     """
     Click Battle Log, then the copy icon, as fast as the UI allows.
 
@@ -442,7 +620,20 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
         pass
 
     if btn_xy is not None:
+        if on_cover:
+            # a cover left over from the last try would take this click
+            on_cover(None)
+            time.sleep(COVER_GONE_S)
         _click(win, btn_xy)
+        # Off the Battle Log button straight away, and a cover over it: a
+        # second click there would close the log again.
+        _park_on_copy_spot(win)
+        if on_cover and template is not None:
+            on_cover(log_button_rect(win, btn_xy, template, expected_scale))
+        if MAC:
+            print(f"[autocopy]   clicked Battle Log at screen "
+                  f"({win.left + btn_xy[0]}, {win.top + btn_xy[1]}), "
+                  f"window {win.width}x{win.height}+{win.left}+{win.top}")
         if on_status:
             on_status("opening battle log")
 
@@ -453,6 +644,7 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
     if copy_template is not None:
         deadline = time.time() + PANEL_TIMEOUT_S
         last = None
+        best, frame = 0.0, None
         while time.time() < deadline:
             try:
                 frame = grab(win)
@@ -461,18 +653,32 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
             xy, score = locate(frame, copy_template, expected_scale,
                                threshold=COPY_MATCH_THRESHOLD,
                                region=COPY_REGION)
+            best = max(best, score or 0.0)
             if xy and last and abs(xy[0] - last[0]) <= STEADY_PX \
                     and abs(xy[1] - last[1]) <= STEADY_PX:
                 print(f"[autocopy]   copy icon steady after "
                       f"{time.time()-t_open:.2f}s ({score:.2f})")
                 time.sleep(SETTLE_S)
                 _click(win, xy)
+                _save_copy_spot(win, xy)
                 clicked = xy
                 if on_status:
                     on_status("copying")
                 break
             last = xy
             time.sleep(0.08)
+        if not clicked and not last and MAC:
+            # what the app saw instead of the open battle log, for working
+            # out why: a picture on the Desktop, kept to one
+            print(f"[autocopy]   copy icon not seen (best {best:.2f}, needs "
+                  f"{COPY_MATCH_THRESHOLD:.2f})")
+            try:
+                if frame is not None:
+                    out = Path.home() / "Desktop" / "fullbench-after-click.png"
+                    cv2.imwrite(str(out), frame)
+                    print(f"[autocopy]   saved what it saw: {out.name}")
+            except Exception:
+                pass
         if not clicked and last:
             # seen but never steady: click where it was last
             print("[autocopy]   copy icon never settled, clicking anyway")
@@ -482,8 +688,12 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
     if not clicked and btn_xy is not None:
         # fallback: select-all in the log body
         _click(win, (win.width // 2, win.height // 2))
-        pydirectinput.keyDown("ctrl"); pydirectinput.press("a"); pydirectinput.keyUp("ctrl")
-        pydirectinput.keyDown("ctrl"); pydirectinput.press("c"); pydirectinput.keyUp("ctrl")
+        if MAC:
+            mac_platform.command_key("a")
+            mac_platform.command_key("c")
+        else:
+            pydirectinput.keyDown("ctrl"); pydirectinput.press("a"); pydirectinput.keyUp("ctrl")
+            pydirectinput.keyDown("ctrl"); pydirectinput.press("c"); pydirectinput.keyUp("ctrl")
     if not clicked and btn_xy is None:
         return False, None
 
@@ -541,7 +751,8 @@ def _find_again(win, copy_template, expected_scale, near):
     return xy
 
 
-def retry_copy(win, template, copy_template, expected, on_status, before):
+def retry_copy(win, template, copy_template, expected, on_status, before,
+               on_cover=None):
     """
     One more go after a missed copy, while Continue is still covered.
 
@@ -560,11 +771,12 @@ def retry_copy(win, template, copy_template, expected, on_status, before):
                         threshold=COPY_MATCH_THRESHOLD, region=COPY_REGION)
         if cxy:
             return do_copy(win, None, copy_template, expected, on_status,
-                           before)
+                           before, on_cover, template)
     xy, _ = locate(frame, template, expected_scale=expected,
                    region=BUTTON_REGION)
     if xy:
-        return do_copy(win, xy, copy_template, expected, on_status, before)
+        return do_copy(win, xy, copy_template, expected, on_status, before,
+                       on_cover, template)
     return False, None
 
 
@@ -604,8 +816,25 @@ def load_templates():
     return btn, cpy, cont
 
 
+def _release():
+    """Stop capturing the game window (a Mac keeps a capture running
+    while the game is open; Windows takes a picture each time)."""
+    if MAC:
+        mac_platform.release_capture()
+
+
 def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
-                 on_prompt=None, skip=None):
+                 on_prompt=None, skip=None, on_cover=None):
+    """Watch for the result screen until `stop` is set; see _watch."""
+    try:
+        return _watch(poll, stop, on_status, on_shield, on_prompt, skip,
+                      on_cover)
+    finally:
+        _release()
+
+
+def _watch(poll=POLL_S, stop=None, on_status=None, on_shield=None,
+           on_prompt=None, skip=None, on_cover=None):
     """
     Watch for the result screen until `stop` is set.
 
@@ -615,6 +844,8 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
     the full window and confirm with template matching.
 
     on_shield(rect, hold_s=None) covers Continue (rect None uncovers it).
+    on_cover(rect) covers the Battle Log button once it has been clicked
+    (rect None uncovers it), so clicking on it again can't close the log.
     on_prompt("waiting", seconds) / ("saved") / ("missed") drives the
     "copy the log yourself" pop-up; setting `skip` ends the wait early.
     """
@@ -637,6 +868,7 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
     while stop is None or not stop.is_set():
         win = find_window()
         if not win:
+            _release()
             time.sleep(2.0)
             continue
 
@@ -684,7 +916,7 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
         # whole point is that it is blocked during the copy, not after.
         before = _clip_state()
         if on_shield:
-            on_shield(shield_rect(win))
+            on_shield(shield_rect(win, frame))
         if on_status:
             on_status("match over - capturing, don't press Continue")
         print(f"[autocopy] result screen confirmed in "
@@ -692,15 +924,15 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
         why = None
         try:
             ok, text = do_copy(win, xy, copy_template, expected, on_status,
-                               before)
+                               before, on_cover, template)
             stopped = stop is not None and stop.is_set()
             if not ok and not stopped:
                 # Continue stays covered, and the cover's clock restarts
                 print("[autocopy]   copy missed, trying once more")
                 if on_shield:
-                    on_shield(shield_rect(win))
+                    on_shield(shield_rect(win, frame))
                 ok, text = retry_copy(win, template, copy_template, expected,
-                                      on_status, before)
+                                      on_status, before, on_cover)
             if not ok and not stopped and MANUAL_WAIT_S > 0:
                 # Still nothing: ask the player to copy it, and keep
                 # Continue covered while they do -- for a while.
@@ -708,7 +940,7 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
                 if skip is not None:
                     skip.clear()
                 if on_shield:
-                    on_shield(shield_rect(win), MANUAL_WAIT_S + 2)
+                    on_shield(shield_rect(win, frame), MANUAL_WAIT_S + 2)
                 if on_prompt:
                     on_prompt("waiting", MANUAL_WAIT_S)
                 if on_status:
@@ -720,6 +952,8 @@ def watch_screen(poll=POLL_S, stop=None, on_status=None, on_shield=None,
             # always drop the shield, even if the copy raised
             if on_shield:
                 on_shield(None)
+            if on_cover:
+                on_cover(None)
             if on_prompt and why is not None:
                 on_prompt("saved" if ok else "missed")
         last_fire = time.time()

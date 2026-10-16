@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.36.0"
+VERSION = "1.36.1"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -17,6 +17,19 @@ DONATE_LABEL = "Support Full Bench on Ko-fi"
 DISCORD_URL = "https://discord.gg/9HHgfca4At"
 
 CHANGELOG = [
+    ("1.36.1", "2026-10-16", [
+        "Clicking over and over as the match ends can no longer close the "
+        "battle log before it's copied. Once Battle Log is clicked, the "
+        "pointer is moved off that button to where the copy icon appears, "
+        "and the button is covered until the copy is done. (The very "
+        "first match after installing only gets the cover, because the "
+        "app learns where the copy icon is from that match.)",
+        "When the app opens and nobody is signed in, a welcome now covers "
+        "it with a Sign in / Create an account button, a short look at "
+        "what an account gives you on fullbench.gg, and a small "
+        "\"Continue without signing in\" link. It goes away once you "
+        "sign in or continue.",
+    ]),
     ("1.36.0", "2026-10-13", [
         "The app is now signed, so Windows shows it as coming from a "
         "known publisher instead of an unknown one.",

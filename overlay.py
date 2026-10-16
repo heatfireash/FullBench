@@ -15,7 +15,11 @@ anywhere.
 """
 
 import queue
+import re
+import sys
 import tkinter as tk
+
+from look import semi, ui
 
 # The banner and the click shield stay red deliberately. They are
 # warnings -- "don't press Continue" has to read as urgent, and the
@@ -49,12 +53,27 @@ class ClickShield:
 
     MAX_MS = 6000          # ceiling for one automatic copy attempt
 
-    def __init__(self, root):
+    def __init__(self, root, text="saving battle log\u2026"):
         self.root = root
+        self.text = text           # what the cover says
         self.q = queue.Queue()
         self.win = None
         self._watchdog = None
         self._pump()
+        if MAC:
+            root.after(800, self._premap)
+
+    def _premap(self):
+        """Mac: put the cover on screen once, out of sight, at startup --
+        see _reveal for why it then stays."""
+        try:
+            if self.win is None or not tk.Toplevel.winfo_exists(self.win):
+                self._make()
+            self.win.geometry("10x10" + OFFSCREEN)
+            self.win.deiconify()
+            _float(self.win)
+        except tk.TclError:
+            pass
 
     # --- any thread
     def show(self, rect, hold_s=None):
@@ -84,29 +103,16 @@ class ClickShield:
         if w <= 0 or h <= 0:
             return
         if self.win is None or not tk.Toplevel.winfo_exists(self.win):
-            self.win = tk.Toplevel(self.root)
-            self.win.overrideredirect(True)
-            self.win.attributes("-topmost", True)
-            try:
-                self.win.attributes("-alpha", 0.82)
-            except tk.TclError:
-                pass
-            f = tk.Frame(self.win, bg=RED)
-            f.pack(fill="both", expand=True)
-            self.lbl = tk.Label(f, text="saving battle log\u2026", bg=RED,
-                                fg=WHITE, font=("Segoe UI Semibold", 13))
-            self.lbl.pack(expand=True)
-            # a click only says why it's there; it never takes it down
-            for w_ in (self.win, f, self.lbl):
-                w_.bind("<Button-1>", lambda e: self._nudge())
-            self.win.bind("<Escape>", lambda e: self._hide())
+            self._make()
         self._text = ("copy the battle log first" if hold_s
-                      else "saving battle log\u2026")
+                      else self.text)
         self.lbl.configure(text=self._text)
         self.win.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
-        self.win.deiconify()
+        _reveal(self.win)
         self.win.lift()
         self.win.attributes("-topmost", True)
+        _float(self.win)      # Mac: Tk resets the level on -topmost
+        _repaint(self.win)
 
         if self._watchdog:
             try:
@@ -116,12 +122,38 @@ class ClickShield:
         limit = int(hold_s * 1000) if hold_s else self.MAX_MS
         self._watchdog = self.root.after(limit, self._hide)
 
+    def _make(self):
+        self.win = tk.Toplevel(self.root)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        try:
+            self.win.attributes("-alpha", 0.82)
+        except tk.TclError:
+            pass
+        f = tk.Frame(self.win, bg=RED)
+        f.pack(fill="both", expand=True)
+        self.lbl = tk.Label(f, text=self.text, bg=RED,
+                            fg=WHITE, font=semi(13))
+        self.lbl.pack(expand=True)
+        # a click only says why it's there; it never takes it down
+        for w_ in (self.win, f, self.lbl):
+            w_.bind("<Button-1>", lambda e: self._nudge())
+        self.win.bind("<Escape>", lambda e: self._hide())
+
     def _nudge(self):
         """Clicked: say so, briefly, then go back to the usual text."""
         try:
             self.lbl.configure(text="not yet \u2014 saving the log")
-            self.root.after(900, lambda: self.lbl.configure(
-                text=getattr(self, "_text", "saving battle log\u2026")))
+            _repaint(self.win)
+            self.root.after(900, self._unnudge)
+        except tk.TclError:
+            pass
+
+    def _unnudge(self):
+        try:
+            self.lbl.configure(
+                text=getattr(self, "_text", "saving battle log\u2026"))
+            _repaint(self.win)
         except tk.TclError:
             pass
 
@@ -133,7 +165,7 @@ class ClickShield:
                 pass
             self._watchdog = None
         if self.win is not None and tk.Toplevel.winfo_exists(self.win):
-            self.win.withdraw()
+            _conceal(self.win)
 
 
 class ExportPrompt:
@@ -164,6 +196,8 @@ class ExportPrompt:
         self._tick = None
         self._left = 0
         self._pump()
+        if MAC:
+            root.after(900, lambda: _premap(self))
 
     # --- any thread
     def waiting(self, seconds):
@@ -203,27 +237,27 @@ class ExportPrompt:
         card.pack(fill="both", expand=True, padx=1, pady=1)
         tk.Frame(card, bg=RED, width=5).pack(side="left", fill="y")
         self.dot = tk.Label(card, text="!", bg=WHITE, fg=RED,
-                            font=("Segoe UI Semibold", 18))
+                            font=semi(18))
         self.dot.pack(side="left", padx=(12, 8))
         right = tk.Frame(card, bg=WHITE)
         right.pack(side="right", fill="y", padx=(6, 12))
         self.count = tk.Label(right, bg=WHITE, fg="#5b6683",
-                              font=("Segoe UI", 8, "bold"))
+                              font=ui(8, "bold"))
         self.count.pack(anchor="e", pady=(10, 2))
         self.skip = tk.Label(right, text="Skip", bg="#f1f4fa", fg=BLACK,
-                             font=("Segoe UI Semibold", 9), padx=10, pady=2,
+                             font=semi(9), padx=10, pady=2,
                              cursor="hand2")
         self.skip.pack(anchor="e")
         self.skip.bind("<Button-1>", lambda e: self._skip())
         text = tk.Frame(card, bg=WHITE)
         text.pack(side="left", fill="both", expand=True, pady=9)
         self.title = tk.Label(text, bg=WHITE, fg=BLACK, anchor="w",
-                              font=("Segoe UI Semibold", 11))
+                              font=semi(11))
         self.title.pack(fill="x")
         # wraps inside the space left of the countdown, not under it
         self.sub = tk.Label(text, bg=WHITE, fg="#5b6683", anchor="w",
                             justify="left", wraplength=215,
-                            font=("Segoe UI", 9))
+                            font=ui(9))
         self.sub.pack(fill="x")
         w.update_idletasks()
         _no_activate(w)
@@ -235,7 +269,7 @@ class ExportPrompt:
         x, y = _corner(self.root, self.W, self.H)
         self.win.geometry(f"{self.W}x{self.H}+{int(x)}+{int(y)}")
         fg = _foreground()
-        self.win.deiconify()
+        _reveal(self.win)
         self.win.attributes("-topmost", True)
         self.win.update_idletasks()
         _no_activate(self.win)
@@ -250,11 +284,13 @@ class ExportPrompt:
         self._left = int(seconds)
         self._stop_tick()
         self._countdown()
+        _repaint(self.win)
 
     def _countdown(self):
         if self._left <= 0:
             return
         self.count.configure(text=f"CONTINUE IN {self._left}s")
+        _repaint(self.win)
         self._left -= 1
         self._tick = self.root.after(1000, self._countdown)
 
@@ -265,6 +301,7 @@ class ExportPrompt:
         self.sub.configure(text="This match wasn't recorded.")
         self.count.configure(text="")
         self.skip.pack_forget()
+        _repaint(self.win)
         self._tick = self.root.after(self.MISSED_MS, self._hide)
 
     def _skip(self):
@@ -286,7 +323,7 @@ class ExportPrompt:
     def _hide(self):
         self._stop_tick()
         if self.win is not None and tk.Toplevel.winfo_exists(self.win):
-            self.win.withdraw()
+            _conceal(self.win)
 
 
 class MatchToast:
@@ -319,6 +356,8 @@ class MatchToast:
         self.root = root
         self.win = None
         self._timer = None
+        if MAC:
+            root.after(1000, lambda: _premap(self))
 
     # --- main thread only
     def show(self, result, opponent, turns=None, sync="saving"):
@@ -337,7 +376,7 @@ class MatchToast:
         self.sub.configure(text=sub)
         self._place()
         fg = _foreground()
-        self.win.deiconify()
+        _reveal(self.win)
         self.win.attributes("-topmost", True)
         self.win.update_idletasks()
         _no_activate(self.win)
@@ -345,6 +384,7 @@ class MatchToast:
         # only now does the label have a real width to fit the text to
         self.win.update_idletasks()
         self.sub.configure(text=self._fit(self.sub, sub))
+        _repaint(self.win)
 
     def set_opponent(self, opponent, turns=None):
         """Swap in fullbench.gg's name for the opponent's deck once the
@@ -356,12 +396,14 @@ class MatchToast:
         if turns:
             sub += f" · {turns} turns"
         self.sub.configure(text=self._fit(self.sub, sub))
+        _repaint(self.win)
 
     def set_sync(self, state):
         if self.win is None or not tk.Toplevel.winfo_exists(self.win):
             return
         text, colour = self._SYNC.get(state, self._SYNC["saving"])
         self.state.configure(text=text, fg=colour)
+        _repaint(self.win)
         self._restart_timer()
 
     def hide(self):
@@ -372,7 +414,7 @@ class MatchToast:
                 pass
             self._timer = None
         if self.win is not None and tk.Toplevel.winfo_exists(self.win):
-            self.win.withdraw()
+            _conceal(self.win)
 
     # --- internals
     @staticmethod
@@ -409,19 +451,19 @@ class MatchToast:
         self.stripe = tk.Frame(card, bg=GREEN, width=5)
         self.stripe.pack(side="left", fill="y")
         self.dot = tk.Label(card, text="✓", bg=WHITE,
-                            font=("Segoe UI Semibold", 16))
+                            font=semi(16))
         self.dot.pack(side="left", padx=(10, 6))
         # packed before the text, so a long deck name is what gets cut
         # short rather than the sync state
-        self.state = tk.Label(card, bg=WHITE, font=("Segoe UI", 8, "bold"))
+        self.state = tk.Label(card, bg=WHITE, font=ui(8, "bold"))
         self.state.pack(side="right", padx=(6, 12))
         text = tk.Frame(card, bg=WHITE)
         text.pack(side="left", fill="both", expand=True, pady=8)
         self.title = tk.Label(text, bg=WHITE, fg=BLACK, anchor="w",
-                              font=("Segoe UI Semibold", 11))
+                              font=semi(11))
         self.title.pack(fill="x")
         self.sub = tk.Label(text, bg=WHITE, fg="#5b6683", anchor="w",
-                            font=("Segoe UI", 9))
+                            font=ui(9))
         self.sub.pack(fill="x")
         for x in (w, card, self.stripe, self.dot, text, self.title,
                   self.sub, self.state):
@@ -453,6 +495,104 @@ def _corner(root, W, H):
 
 
 # --- Windows helpers; every one is a harmless no-op elsewhere -----------
+# (a Mac gets its own version of the ones that matter, through
+# mac_platform)
+
+MAC = sys.platform == "darwin"
+OFFSCREEN = "+-10000+-10000"
+
+
+def _reveal(win):
+    """
+    Show a cover or pop-up that has just been placed.
+
+    On a Mac it's never taken off screen and put back: Tk makes Full
+    Bench the active app each time one of its windows appears, which
+    would take focus from the game (and, if the game is full screen,
+    switch away from it). So there the windows appear once, at startup,
+    and are only ever moved: into place to show, far off screen to hide.
+    """
+    if MAC and win.winfo_ismapped():
+        return
+    win.deiconify()
+
+
+def _conceal(win):
+    if MAC:
+        win.geometry(OFFSCREEN)
+    else:
+        win.withdraw()
+
+
+def _geometry(win):
+    """(width, height, x) of a toplevel, or None."""
+    m = re.match(r"(\d+)x(\d+)[+-](-?\d+)[+-](-?\d+)", win.geometry())
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def _repaint(win):
+    """
+    Mac only: make Tk draw what's inside a cover or pop-up that's on
+    screen. With Tk 9 on macOS 26, a pop-up moved on screen showed only
+    its background colour: the card, the text and the colours in it
+    weren't drawn until the window changed size. So it's made a point
+    taller for a moment, then put back.
+    """
+    if not MAC:
+        return
+    try:
+        if getattr(win, "_fb_nudging", False):
+            return            # one's under way; putting it back redraws
+        win.update_idletasks()
+        g = _geometry(win)
+        if not g:
+            return
+        w, h, x = g
+        if x <= -5000 or w < 2 or h < 2:
+            return                       # hidden off screen
+        win._fb_nudging = True
+        win.geometry(f"{w}x{h + 1}")
+        win.update_idletasks()
+        win.after(40, lambda: _unnudge(win, w, h))
+    except tk.TclError:
+        pass
+
+
+def _unnudge(win, w, h):
+    """Back to the real size -- unless something has resized the window
+    since, which redraws it anyway."""
+    try:
+        win._fb_nudging = False
+        if tk.Toplevel.winfo_exists(win) and _geometry(win)[:2] == (w, h + 1):
+            win.geometry(f"{w}x{h}")
+    except (tk.TclError, TypeError):
+        pass
+
+
+def _premap(popup):
+    """Mac: build a pop-up and put it on screen once, out of sight."""
+    try:
+        if popup.win is None or not tk.Toplevel.winfo_exists(popup.win):
+            popup._build()
+        popup.win.geometry(f"{popup.W}x{popup.H}{OFFSCREEN}")
+        popup.win.deiconify()
+        _no_activate(popup.win)
+    except tk.TclError:
+        pass
+
+
+def _float(win):
+    """Mac only: keep a cover or pop-up above the game, even a full-screen
+    game in its own Space. Tk's "topmost" alone doesn't reach there."""
+    if not MAC:
+        return
+    try:
+        import mac_platform
+        win.update_idletasks()
+        mac_platform.float_window(win)
+    except Exception:
+        pass
+
 
 def _user32():
     try:
@@ -463,6 +603,12 @@ def _user32():
 
 
 def _foreground():
+    if MAC:
+        try:
+            import mac_platform
+            return mac_platform.frontmost_pid()
+        except Exception:
+            return None
     u = _user32()
     try:
         return u.GetForegroundWindow() if u else None
@@ -471,6 +617,15 @@ def _foreground():
 
 
 def _restore_foreground(hwnd):
+    if MAC:
+        # hwnd is the app (pid) that was in front: hand focus back to it
+        try:
+            import mac_platform
+            if hwnd:
+                mac_platform.bring_to_front(hwnd, wait=0)
+        except Exception:
+            pass
+        return
     u = _user32()
     if not u or not hwnd:
         return
@@ -482,7 +637,11 @@ def _restore_foreground(hwnd):
 
 
 def _no_activate(win):
-    """Mark a Tk toplevel so clicking or showing it never takes focus."""
+    """Mark a Tk toplevel so clicking or showing it never takes focus.
+    (On a Mac, keep it floating over the game instead.)"""
+    if MAC:
+        _float(win)
+        return
     u = _user32()
     if not u:
         return

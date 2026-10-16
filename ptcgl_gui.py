@@ -13,6 +13,7 @@ Both decks are detected from the battle log -- nothing to type in.
 import json
 import queue
 import sqlite3
+import os
 import sys
 import threading
 import time
@@ -247,6 +248,9 @@ class App(tk.Tk):
         if "--updated" in sys.argv:
             self.after(1500, lambda: self.log(f"updated to {VERSION}"))
 
+        if MAC:
+            self._mac_menu_bar_app()
+
         try:
             # Only the shield over Continue. The full-width banner used to
             # sit across the top of the screen, which is exactly where the
@@ -254,8 +258,11 @@ class App(tk.Tk):
             # capture needs to click.
             from overlay import ClickShield
             self.shield = ClickShield(self)
+            # a second one, over the Battle Log button once it's clicked
+            self.log_cover = ClickShield(self, text="log opening\u2026")
         except Exception:
             self.shield = None
+            self.log_cover = None
         try:
             from overlay import MatchToast
             self.toast = MatchToast(self)
@@ -278,11 +285,101 @@ class App(tk.Tk):
         self.after(300, self._drain_log)
         self._start_game_watch()
         if self.cfg.get("start_minimised"):
-            self.iconify()
+            if MAC:
+                self.withdraw()        # opened again from the menu bar
+            else:
+                self.iconify()
+        elif MAC:
+            self.after(200, self._mac_show)
         self._update_info = None       # set when a newer build exists
         self._update_prompted = None   # version already shown this run
         self.after(4000, self._check_for_update)
         self.after(1500, self._reparse_if_needed)
+        # the sign-in welcome, over the app until one of its two choices
+        self._gate = None
+        self._gate_done = False         # "continue without" this session
+        self.after(900, self._maybe_gate)
+
+    # ------------------------------------------------------------ Mac
+
+    def _mac_menu_bar_app(self):
+        """
+        On a Mac, Full Bench is a menu-bar app: an icon at the top right of
+        the screen, no Dock icon. That's the only kind of app macOS lets
+        draw over a game played full screen, and the cover over Continue
+        and the match pop-up have to show there. It has to be set before
+        those windows are first shown, so it's done here, first thing.
+        Closing the window hides it; the menu-bar icon opens it again or
+        quits.
+        """
+        try:
+            import mac_platform
+            mac_platform.set_accessory(True)
+            self._status_item = mac_platform.StatusItem(
+                [("Open Full Bench", self._mac_show),
+                 None,
+                 ("Quit Full Bench", self._mac_quit)],
+                icon_path=_asset("logo_small.png"))
+        except Exception as e:
+            # no menu-bar icon: stay an ordinary app with a Dock icon, so
+            # it can still be found and quit (full screen won't get the
+            # cover)
+            print(f"[mac] menu bar icon unavailable: {e}")
+            try:
+                import mac_platform
+                mac_platform.set_accessory(False)
+            except Exception:
+                pass
+            self._status_item = None
+            return
+        self.protocol("WM_DELETE_WINDOW", self._mac_hide)
+        self.createcommand("::tk::mac::Quit", self._mac_quit)
+
+    def _mac_show(self):
+        try:
+            self.deiconify()
+            self.lift()
+            import mac_platform
+            mac_platform.activate_self()
+            self.focus_force()
+        except Exception:
+            pass
+
+    def _mac_hide(self):
+        """The window's close button: hide, keep tracking. The first time,
+        say where it went."""
+        self.withdraw()
+        if not self.cfg.get("mac_menu_bar_told"):
+            self.cfg["mac_menu_bar_told"] = True
+            try:
+                self.settings_mod.save(self.cfg)
+            except Exception:
+                pass
+            try:
+                from tkinter import messagebox
+                self._mac_show()
+                messagebox.showinfo(
+                    APP_NAME,
+                    "Full Bench is still running and keeps recording your "
+                    "matches.\n\nIts icon is in the menu bar at the top "
+                    "right of the screen. Click it to open Full Bench "
+                    "again or to quit.", parent=self)
+                self.withdraw()
+            except Exception:
+                pass
+
+    def _mac_quit(self):
+        try:
+            if self.stop_evt:
+                self.stop_evt.set()
+        except Exception:
+            pass
+        try:
+            if self._status_item is not None:
+                self._status_item.remove()
+        except Exception:
+            pass
+        self.destroy()
 
     def _native_icon(self):
         """
@@ -1052,51 +1149,120 @@ class App(tk.Tk):
         there -- where you can see the address bar and the certificate.
         """
         import cloud
+        import webbrowser
         url = self._server()
-        self.cloud_note.configure(text="opening your browser\u2026", fg=MUTED)
-
-        def run():
-            ok, info, msg = cloud.start_browser_login(url)
-            if not ok:
-                self.after(0, lambda: self.cloud_note.configure(text=msg,
-                                                                fg=RED))
-                return
-            import webbrowser
+        if getattr(self, "_login_busy", False):
+            # already waiting for an approval: open that page again, in
+            # case the browser window was closed
             try:
-                webbrowser.open(info["verify_url"])
+                if getattr(self, "_login_url", None):
+                    webbrowser.open(self._login_url)
             except Exception:
                 pass
-            self.after(0, lambda: self.cloud_note.configure(
-                text=f"approve this computer in your browser. "
-                     f"Code: {info['user_code']}", fg=MUTED))
+            return
+        self._login_busy = True
+        self._login_url = None
+        self._login_note("opening your browser\u2026", MUTED)
 
-            deadline = time.time() + info.get("expires_in", 600)
-            interval = max(1, int(info.get("interval", 2)))
-            while time.time() < deadline:
-                time.sleep(interval)
-                state, token, m = cloud.poll_browser_login(
-                    url, info["device_code"])
-                if state == "approved":
-                    def done():
-                        self.cfg["cloud_token"] = token
-                        self.cfg["cloud_email"] = m.replace(
-                            "signed in as ", "").strip()
-                        self.settings_mod.save(self.cfg)
-                        self._cloud_state()
-                        self._header_state()
-                        self.cloud_note.configure(
-                            text=self._signed_in_text(), fg=WIN)
-                        self._cloud_sync(quiet=True)
-                    self.after(0, done)
-                    return
-                if state == "failed":
-                    self.after(0, lambda mm=m: self.cloud_note.configure(
-                        text=mm, fg=RED))
-                    return
-            self.after(0, lambda: self.cloud_note.configure(
-                text="the code expired - try again", fg=RED))
+        def run():
+            try:
+                self._browser_login(cloud, url)
+            finally:
+                self._login_busy = False
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _login_note(self, text, fg=MUTED):
+        """The sign-in's progress line: in Settings, and on the welcome
+        if that is showing."""
+        self.cloud_note.configure(text=text, fg=fg)
+        gate = getattr(self, "_gate", None)
+        if gate is not None and gate.is_open:
+            gate.set_status(text, fg)
+
+    def _browser_login(self, cloud, url):
+        """The worker half of _cloud_browser_login (runs off the main
+        thread)."""
+        ok, info, msg = cloud.start_browser_login(url)
+        if not ok:
+            self.after(0, lambda: self._login_note(msg, RED))
+            return
+        import webbrowser
+        self._login_url = info["verify_url"]
+        try:
+            webbrowser.open(info["verify_url"])
+        except Exception:
+            pass
+        self.after(0, lambda: self._login_note(
+            f"approve this computer in your browser. "
+            f"Code: {info['user_code']}", MUTED))
+
+        deadline = time.time() + info.get("expires_in", 600)
+        interval = max(1, int(info.get("interval", 2)))
+        while time.time() < deadline:
+            time.sleep(interval)
+            state, token, m = cloud.poll_browser_login(
+                url, info["device_code"])
+            if state == "approved":
+                def done():
+                    self.cfg["cloud_token"] = token
+                    self.cfg["cloud_email"] = m.replace(
+                        "signed in as ", "").strip()
+                    self.settings_mod.save(self.cfg)
+                    self._cloud_state()
+                    self._header_state()
+                    self.cloud_note.configure(
+                        text=self._signed_in_text(), fg=WIN)
+                    self._gate_close()
+                    self._cloud_sync(quiet=True)
+                self.after(0, done)
+                return
+            if state == "failed":
+                self.after(0, lambda mm=m: self._login_note(mm, RED))
+                return
+        self.after(0, lambda: self._login_note(
+            "the code expired - try again", RED))
+
+    # ---- the sign-in welcome
+    def _maybe_gate(self):
+        """Show the welcome while nobody is signed in. Waits for the window
+        to be on screen (it may start hidden or minimised), and only comes
+        up once per start: "continue without signing in" ends it."""
+        try:
+            if self.cfg.get("cloud_token") or self._gate_done:
+                return
+            if self._gate is not None and self._gate.is_open:
+                return
+            if not self.winfo_viewable() or self.state() == "iconic":
+                self.after(1500, self._maybe_gate)
+                return
+            from welcome import SignInGate
+            self._gate = SignInGate(self, _asset,
+                                    on_signin=self._cloud_browser_login,
+                                    on_skip=self._gate_skip)
+            self._gate.show()
+            self.after(800, self._gate_watch)
+        except Exception:
+            self._gate = None            # no welcome; the app is unaffected
+
+    def _gate_skip(self):
+        self._gate_done = True
+        self._gate_close()
+
+    def _gate_close(self):
+        gate = getattr(self, "_gate", None)
+        if gate is not None:
+            gate.close()
+
+    def _gate_watch(self):
+        """Take the welcome down if a sign-in finished some other way."""
+        gate = getattr(self, "_gate", None)
+        if gate is None or not gate.is_open:
+            return
+        if self.cfg.get("cloud_token"):
+            gate.close()
+            return
+        self.after(800, self._gate_watch)
 
     def _cloud_signout(self):
         import cloud
@@ -1287,7 +1453,9 @@ class App(tk.Tk):
         else:
             text += ("\n\nTo update: download it, quit Full Bench, and "
                      "drag the new Full Bench into Applications, replacing "
-                     "the old one. Your matches and settings are kept."
+                     "the old one. Your matches and settings are kept. "
+                     "macOS may ask for Screen Recording and Accessibility "
+                     "again the first time the new version runs."
                      if MAC else
                      "\n\nTo update: download it, close Full Bench, and "
                      "replace your old FullBench.exe with the new one. Your "
@@ -1678,6 +1846,15 @@ class App(tk.Tk):
             else:
                 self.shield.show(rect, hold_s)
 
+        def cover(rect):
+            if not getattr(self, "log_cover", None) \
+                    or not self.cfg.get("block_continue", True):
+                return
+            if rect is None:
+                self.log_cover.hide()
+            else:
+                self.log_cover.show(rect)
+
         def prompt(state, seconds=None):
             if not self.prompt:
                 return
@@ -1698,13 +1875,18 @@ class App(tk.Tk):
                                               on_status=status,
                                               on_shield=shield,
                                               on_prompt=prompt,
-                                              skip=self.skip_evt),
+                                              skip=self.skip_evt,
+                                              on_cover=cover),
                 "autocopy"), daemon=True).start()
             self.log("screen watcher started.")
         except FileNotFoundError as e:
             self.log(f"auto-copy off: {e}")
         except ImportError as e:
-            self.log(f"auto-copy off, missing package: {e.name}")
+            # e.name is the missing module, when there is one; OpenCV's own
+            # loader raises ImportError with no name and the real reason
+            # in the message, so show both
+            self.log(f"auto-copy off, couldn't load "
+                     f"{e.name or 'a package'}: {e}")
         except PermissionError as e:
             self.log(f"auto-copy off: {e}")
 
@@ -2049,5 +2231,27 @@ class App(tk.Tk):
         self.detail.configure(state="disabled")
 
 
+def _selfcheck():
+    """FULLBENCH_SELFCHECK=1: load what the screen watcher needs and quit,
+    without opening a window. build_mac.py runs the built app this way,
+    so a package that didn't make it into the app is caught at build
+    time rather than when a match ends."""
+    try:
+        import cv2
+        import numpy
+        import autocopy
+        if MAC:
+            import mac_platform  # noqa: F401
+        autocopy.load_templates()
+        print(f"selfcheck ok: OpenCV {cv2.__version__}, numpy "
+              f"{numpy.__version__}")
+        return 0
+    except Exception as e:
+        print(f"selfcheck failed: {type(e).__name__}: {e}")
+        return 1
+
+
 if __name__ == "__main__":
+    if os.environ.get("FULLBENCH_SELFCHECK") == "1":
+        sys.exit(_selfcheck())
     App().mainloop()
