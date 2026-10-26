@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.36.1"
+VERSION = "1.36.2"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -17,6 +17,14 @@ DONATE_LABEL = "Support Full Bench on Ko-fi"
 DISCORD_URL = "https://discord.gg/9HHgfca4At"
 
 CHANGELOG = [
+    ("1.36.2", "2026-10-26", [
+        "Fixed games not being captured since 1.36.1. After clicking "
+        "Battle Log, the pointer waited right on top of the copy icon, "
+        "which lights the icon up so the app no longer recognised it and "
+        "never clicked it. The pointer now waits just below the icon "
+        "instead, and the app also looks for the lit-up icon in case the "
+        "pointer ends up on it anyway.",
+    ]),
     ("1.36.1", "2026-10-16", [
         "Clicking over and over as the match ends can no longer close the "
         "battle log before it's copied. Once Battle Log is clicked, the "

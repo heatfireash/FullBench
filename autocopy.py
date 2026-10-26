@@ -170,6 +170,14 @@ RECLICK_AFTER_S = 0.7
 # The icon looks different with the pointer over it, so finding it again
 # for a second click searches just around where it was, less strictly.
 RECLICK_THRESHOLD = 0.70
+# Where the pointer waits for the copy icon: this far below where the
+# icon was last seen (a fraction of the window height, at least PX).
+PARK_BELOW = 0.07
+PARK_BELOW_PX = 40
+# Looking for the icon where it was last seen, less strictly, in case the
+# pointer is over it and it's highlighted. Stricter than a re-click's
+# search, since nothing has been clicked yet to show the panel is open.
+NEAR_SPOT_THRESHOLD = 0.78
 # If the automatic copy misses twice -- usually a stray click closed the
 # battle log before the copy icon could be clicked -- Continue stays
 # covered this long while the player copies the log by hand. After that
@@ -525,7 +533,13 @@ def _park_on_copy_spot(win):
     spot = _load_copy_spot()
     if not spot:
         return False
-    _move_pointer(win, (int(spot[0] * win.width), int(spot[1] * win.height)))
+    # Just below the icon, on the log's text, not on the icon itself: an
+    # icon with the pointer over it is drawn highlighted, and then it no
+    # longer looks like the picture it's found by (1.36.1 missed copies
+    # that way). A click on the log's text does nothing.
+    x = int(spot[0] * win.width)
+    y = int(spot[1] * win.height) + max(PARK_BELOW_PX, int(win.height * PARK_BELOW))
+    _move_pointer(win, (x, min(y, win.height - 5)))
     return True
 
 
@@ -641,6 +655,8 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
     # only once it has stopped moving
     clicked = False
     t_open = time.time()
+    spot = _load_copy_spot()
+    spot_px = (int(spot[0] * win.width), int(spot[1] * win.height)) if spot else None
     if copy_template is not None:
         deadline = time.time() + PANEL_TIMEOUT_S
         last = None
@@ -653,6 +669,11 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
             xy, score = locate(frame, copy_template, expected_scale,
                                threshold=COPY_MATCH_THRESHOLD,
                                region=COPY_REGION)
+            if not xy and spot_px:
+                # highlighted under the pointer? look where it always is
+                xy, score = locate(frame, copy_template, expected_scale,
+                                   threshold=NEAR_SPOT_THRESHOLD,
+                                   region=_around(frame, spot_px))
             best = max(best, score or 0.0)
             if xy and last and abs(xy[0] - last[0]) <= STEADY_PX \
                     and abs(xy[1] - last[1]) <= STEADY_PX:
@@ -677,6 +698,19 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
                     out = Path.home() / "Desktop" / "fullbench-after-click.png"
                     cv2.imwrite(str(out), frame)
                     print(f"[autocopy]   saved what it saw: {out.name}")
+            except Exception:
+                pass
+        if not clicked and not last and not MAC:
+            print(f"[autocopy]   copy icon not found in "
+                  f"{PANEL_TIMEOUT_S:.0f}s (best match {best:.2f}, needs "
+                  f"{COPY_MATCH_THRESHOLD:.2f})")
+            # what the app saw instead, for working out why: one picture,
+            # replaced each time, beside the app's other files
+            try:
+                if frame is not None:
+                    out = app_paths.user_dir() / "copy-icon-not-found.png"
+                    cv2.imwrite(str(out), frame)
+                    print(f"[autocopy]   saved what it saw: {out}")
             except Exception:
                 pass
         if not clicked and last:
@@ -724,9 +758,18 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
         time.sleep(0.06)
 
     print(f"[autocopy]   copy not confirmed after "
-          f"{time.time()-t_start:.1f}s ({clicks} click"
-          f"{'s' if clicks > 1 else ''} on the icon)")
+          f"{time.time()-t_start:.1f}s ("
+          + (f"{clicks} click{'s' if clicks > 1 else ''} on the icon)"
+             if isinstance(clicked, tuple) else "the icon was never clicked)"))
     return False, None
+
+
+def _around(frame, near):
+    """A search region (fractions of the frame) around a point."""
+    h, w = frame.shape[:2]
+    pad_x, pad_y = max(80, w // 12), max(80, h // 12)
+    return (max(0, near[0] - pad_x) / w, max(0, near[1] - pad_y) / h,
+            min(w, near[0] + pad_x) / w, min(h, near[1] + pad_y) / h)
 
 
 def _find_again(win, copy_template, expected_scale, near):
@@ -742,12 +785,8 @@ def _find_again(win, copy_template, expected_scale, near):
                    threshold=COPY_MATCH_THRESHOLD, region=COPY_REGION)
     if xy:
         return xy
-    h, w = frame.shape[:2]
-    pad_x, pad_y = max(80, w // 12), max(80, h // 12)
-    region = (max(0, near[0] - pad_x) / w, max(0, near[1] - pad_y) / h,
-              min(w, near[0] + pad_x) / w, min(h, near[1] + pad_y) / h)
     xy, _ = locate(frame, copy_template, expected_scale,
-                   threshold=RECLICK_THRESHOLD, region=region)
+                   threshold=RECLICK_THRESHOLD, region=_around(frame, near))
     return xy
 
 
