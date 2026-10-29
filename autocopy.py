@@ -936,6 +936,7 @@ def _watch(poll=POLL_S, stop=None, on_status=None, on_shield=None,
         except Exception:
             time.sleep(poll)
             continue
+        t_grab = time.time()
 
         expected = (win.height / calib_h) if calib_h else None
         xy, score = locate(frame, template, expected_scale=expected,
@@ -951,6 +952,7 @@ def _watch(poll=POLL_S, stop=None, on_status=None, on_shield=None,
                 time.sleep(poll)
                 continue
 
+        t_found = time.time()
         # Cover the Continue button before doing anything else: the
         # whole point is that it is blocked during the copy, not after.
         before = _clip_state()
@@ -958,8 +960,13 @@ def _watch(poll=POLL_S, stop=None, on_status=None, on_shield=None,
             on_shield(shield_rect(win, frame))
         if on_status:
             on_status("match over - capturing, don't press Continue")
+        t_done = time.time()
+        # each step's share, so a slow one shows which part was slow
         print(f"[autocopy] result screen confirmed in "
-              f"{(time.time()-t_seen)*1000:.0f}ms (log btn {score:.2f})")
+              f"{(t_done-t_seen)*1000:.0f}ms (log btn {score:.2f}; "
+              f"grab {(t_grab-t_seen)*1000:.0f}, "
+              f"find {(t_found-t_grab)*1000:.0f}, "
+              f"cover {(t_done-t_found)*1000:.0f})")
         why = None
         try:
             ok, text = do_copy(win, xy, copy_template, expected, on_status,

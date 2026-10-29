@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import ttk, messagebox
 
-from look import semi, ui
+from look import num, semi, ui
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -42,22 +42,29 @@ except ImportError:
     DISCORD_URL = ""
 DB_PATH = Path.home() / "ptcgl_matches.db"
 
-# Light theme. Blue and gold are kept for the header and for selection;
-# everything else is white so the app doesn't drown in colour.
-SURFACE = "#ffffff"       # window background
-PANEL = "#f1f4fa"         # cards, fields, table rows
-LINE = "#dbe2ee"          # borders and dividers
-TEXT = "#12193a"          # body text: the deep blue, near-black
-MUTED = "#5b6683"         # secondary text (passes on white and on panel)
-HEADER = "#1a2d68"        # the blue bar across the top
+# The same look as fullbench.gg: ink on paper with thin lines, the navy
+# kept for the bar across the top (the logo sits on it), and yellow saved
+# for the few things that matter -- Sign in, an update, a selected row.
+# Winning is blue and losing orange, a pair colour-blind players can tell
+# apart (green and red are the pair they can't).
+SURFACE = "#f6f5f1"       # window background: paper
+PANEL = "#ffffff"         # cards, fields, tables: white on the paper
+LINE = "#e2dfd5"          # borders and dividers
+TEXT = "#15140f"          # body text: ink
+MUTED = "#6a6558"         # secondary text (passes on paper and on white)
+HEADER = "#1a2d68"        # the navy bar across the top
 HEADER_FG = "#f7f8fc"     # text on that bar
-ACCENT = "#f5c518"        # gold -- selected tab, primary button
+ACCENT = "#f5c518"        # yellow -- Sign in, updates, the selected row
 ACCENT_DK = "#d9ab0f"
-WIN = "#14752f"           # dark enough to stay readable on white
-LOSS = "#c5221f"
+SELECT = "#fbe7a1"        # a selected row: yellow, like a highlighter
+INK = "#15140f"           # the selected tab and the main buttons
+INK_HI = "#3a372f"        # those under the pointer
+HOVER = "#efede6"         # a plain button under the pointer
+WIN = "#1d5fd1"           # winning, and things that went right
+LOSS = "#c2410c"          # losing
 RED = LOSS                # warnings and problems
-CONSOLE = "#f7f8fb"       # Activity log
-CONSOLE_FG = "#3a445f"
+CONSOLE = "#ffffff"       # Activity log
+CONSOLE_FG = "#3d3a33"
 
 
 def _asset(name):
@@ -215,12 +222,19 @@ class App(tk.Tk):
                         file=str(_asset("logo_small.png")))
                     self.iconphoto(True, self._dock_icon)
             elif ico.exists():
-                self.iconbitmap(str(ico))
+                # default=: every window the app opens (the update prompt,
+                # a battle log) gets it too, not Tk's feather
+                self.iconbitmap(str(ico), default=str(ico))
         except Exception:
             pass
         # Tk gives Windows the 16px frame for everything, which the
-        # taskbar stretches; replace it once the window exists.
+        # taskbar stretches; replace it once the window exists -- and
+        # again each time it's put on screen, because with default= above
+        # Tk hands its own 16px icon to the window as it first appears,
+        # which can be after this first try (1.37's blurry taskbar icon).
         self.after(50, self._native_icon)
+        self.bind("<Map>", lambda e: e.widget is self and self.after(
+            10, self._native_icon), add="+")
         try:
             # Tk 9 (a Mac's) sends two-finger trackpad scrolling as its
             # own event; older Tk doesn't know it, and that's fine
@@ -229,9 +243,15 @@ class App(tk.Tk):
             pass
 
         self.log_q = queue.Queue()
+        # Changes to the window asked for by the watcher threads. They go
+        # through this queue rather than self.after: from another thread,
+        # after() waits until the window gets round to it, and a capture
+        # must never wait on the window -- Continue is uncovered meanwhile.
+        self.ui_q = queue.Queue()
         self.stop_evt = None
         self.logo_img = None
         self.missed = 0
+        self._asked = False         # the capture asked for a copy by hand
         self._detail_id = None
         self._game_up = False
 
@@ -283,6 +303,7 @@ class App(tk.Tk):
         self._build()
         self.refresh()
         self.after(300, self._drain_log)
+        self.after(50, self._pump_ui)
         self._start_game_watch()
         if self.cfg.get("start_minimised"):
             if MAC:
@@ -381,7 +402,7 @@ class App(tk.Tk):
             pass
         self.destroy()
 
-    def _native_icon(self):
+    def _native_icon(self, win=None):
         """
         Set the window's icons through Windows directly, at the sizes it
         actually draws them.
@@ -396,6 +417,9 @@ class App(tk.Tk):
         LoadImage with a size picks the matching frame out of the .ico,
         the same way Windows does for the exe on the desktop. The taskbar
         gets 24px times the display scale, the title bar 16px times it.
+
+        win: another window of the app's (a dialog) to give the same icons;
+        the main window if not given.
         """
         if sys.platform != "win32":
             return
@@ -435,26 +459,51 @@ class App(tk.Tk):
                                        wintypes.WPARAM, ctypes.c_void_p]
             IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
 
+            # loaded once per size and kept, so the handles outlive this
+            # call and setting them again doesn't load new ones
+            cache = self.__dict__.setdefault("_icons", {})
+
             def load(px):
                 px = int(round(px))
-                return u.LoadImageW(None, str(ico), IMAGE_ICON, px, px,
-                                    LR_LOADFROMFILE)
+                if not cache.get(px):
+                    cache[px] = u.LoadImageW(None, str(ico), IMAGE_ICON, px,
+                                             px, LR_LOADFROMFILE)
+                return cache[px]
 
             big = load(24 * scale)       # taskbar
             small = load(16 * scale)     # title bar
             if not big:
                 self.log("icon: could not load icon.ico")
                 return
-            # kept, so the handles outlive this call
-            self._icons = (big, small)
-            hwnd = u.GetParent(self.winfo_id()) or self.winfo_id()
+            w = win or self
+            hwnd = u.GetParent(w.winfo_id()) or w.winfo_id()
             WM_SETICON = 0x80
             u.SendMessageW(hwnd, WM_SETICON, 1, big)
             u.SendMessageW(hwnd, WM_SETICON, 0, small or big)
-            self.log(f"icon: set at {int(round(24 * scale))}px "
-                     f"(display {int(scale * 100)}%)")
+            # The window class's icons too -- every Tk window shares the
+            # class, and it's where Windows looks when a window's own icon
+            # is reset -- so Tk's 16px default can't come back.
+            try:
+                set_cls = getattr(u, "SetClassLongPtrW", None) or u.SetClassLongW
+                set_cls.restype = ctypes.c_void_p
+                set_cls.argtypes = [wintypes.HWND, ctypes.c_int,
+                                    ctypes.c_void_p]
+                GCLP_HICON, GCLP_HICONSM = -14, -34
+                set_cls(hwnd, GCLP_HICON, big)
+                set_cls(hwnd, GCLP_HICONSM, small or big)
+            except Exception:
+                pass
+            if win is None:
+                self.log(f"icon: set at {int(round(24 * scale))}px "
+                         f"(display {int(scale * 100)}%)")
         except Exception as e:
             self.log(f"icon: {e}")
+
+    def _dialog_icon(self, dlg):
+        """The app's icon on a dialog's title bar and, when it has its own
+        taskbar button (the update prompt while the app is minimised),
+        there too."""
+        self.after(50, lambda: dlg.winfo_exists() and self._native_icon(dlg))
 
     def _style(self):
         s = ttk.Style(self)
@@ -463,44 +512,71 @@ class App(tk.Tk):
         except tk.TclError:
             pass
         s.configure(".", background=SURFACE, foreground=TEXT,
-                    fieldbackground="#ffffff", bordercolor=LINE)
+                    fieldbackground=PANEL, bordercolor=LINE,
+                    lightcolor=LINE, darkcolor=LINE)
         s.configure("TNotebook", background=SURFACE, borderwidth=0)
-        s.configure("TNotebook.Tab", background=PANEL, foreground=MUTED,
-                    padding=(18, 9), borderwidth=0)
-        s.configure("Treeview", borderwidth=1, relief="flat")
-        # dark text on the gold tab -- white on yellow is unreadable
-        s.map("TNotebook.Tab", background=[("selected", ACCENT)],
+        # tabs: quiet words on the paper; the one you're on in ink
+        s.configure("TNotebook.Tab", background=SURFACE, foreground=MUTED,
+                    padding=(16, 8), borderwidth=0, font=semi(10),
+                    bordercolor=SURFACE, lightcolor=SURFACE)
+        s.map("TNotebook.Tab",
+              background=[("selected", INK), ("active", HOVER)],
+              foreground=[("selected", "#ffffff"), ("active", TEXT)],
+              bordercolor=[("selected", INK)],
+              lightcolor=[("selected", INK)])
+        s.configure("Treeview", background=PANEL, fieldbackground=PANEL,
+                    foreground=TEXT, rowheight=28, borderwidth=0,
+                    relief="flat")
+        s.configure("Treeview.Heading", background=SURFACE, foreground=MUTED,
+                    borderwidth=0, relief="flat", font=semi(9))
+        s.map("Treeview.Heading", background=[("active", HOVER)])
+        # a selected row is highlighted, like the site's yellow marker
+        s.map("Treeview", background=[("selected", SELECT)],
               foreground=[("selected", TEXT)])
-        s.configure("Treeview", background="#ffffff",
-                    fieldbackground="#ffffff", foreground=TEXT,
-                    rowheight=27, borderwidth=0)
-        s.configure("Treeview.Heading", background=PANEL, foreground=MUTED,
-                    borderwidth=0, relief="flat")
-        # gold selection, dark text -- the accent doing real work
-        s.map("Treeview", background=[("selected", ACCENT)],
-              foreground=[("selected", TEXT)])
+        # plain buttons: white with a thin edge
         s.configure("TButton", background=PANEL, foreground=TEXT,
-                    borderwidth=0, padding=(14, 7), focuscolor=PANEL)
-        s.map("TButton", background=[("active", LINE)])
-        # primary action in gold, with dark text for contrast
-        s.configure("Go.TButton", background=ACCENT, foreground=SURFACE)
-        s.map("Go.TButton", background=[("active", ACCENT_DK)])
-        s.configure("TCombobox", fieldbackground="#ffffff",
+                    bordercolor=LINE, lightcolor=PANEL, darkcolor=PANEL,
+                    borderwidth=1, padding=(14, 7), focuscolor=PANEL)
+        s.map("TButton", background=[("active", HOVER)],
+              lightcolor=[("active", HOVER)], darkcolor=[("active", HOVER)])
+        # the main action on a screen: ink, white text
+        s.configure("Go.TButton", background=INK, foreground="#ffffff",
+                    bordercolor=INK, lightcolor=INK, darkcolor=INK,
+                    focuscolor=INK)
+        s.map("Go.TButton", background=[("active", INK_HI)],
+              bordercolor=[("active", INK_HI)],
+              lightcolor=[("active", INK_HI)], darkcolor=[("active", INK_HI)])
+        # yellow, kept for Sign in and updates -- dark text on it
+        s.configure("Gold.TButton", background=ACCENT, foreground=TEXT,
+                    bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
+                    focuscolor=ACCENT)
+        s.map("Gold.TButton", background=[("active", ACCENT_DK)],
+              bordercolor=[("active", ACCENT_DK)],
+              lightcolor=[("active", ACCENT_DK)],
+              darkcolor=[("active", ACCENT_DK)])
+        s.configure("TCombobox", fieldbackground=PANEL,
                     background=PANEL, foreground=TEXT, arrowcolor=TEXT,
-                    borderwidth=0, padding=(8, 6))
+                    bordercolor=LINE, borderwidth=1, padding=(8, 6))
         # the deck picker drives the whole dashboard, so it gets a size
         # that reads at a glance rather than the default control text
-        s.configure("Big.TCombobox", fieldbackground="#ffffff",
+        s.configure("Big.TCombobox", fieldbackground=PANEL,
                     background=PANEL, foreground=TEXT, arrowcolor=TEXT,
-                    borderwidth=0, padding=(10, 8))
+                    bordercolor=LINE, borderwidth=1, padding=(10, 8))
+        s.configure("TCheckbutton", background=SURFACE, foreground=TEXT)
+        # the pickers are read-only, which clam draws grey; keep them white
+        for st in ("TCombobox", "Big.TCombobox"):
+            s.map(st, fieldbackground=[("readonly", PANEL)],
+                  background=[("active", HOVER), ("readonly", PANEL)],
+                  selectbackground=[("readonly", PANEL)],
+                  selectforeground=[("readonly", TEXT)])
         self.option_add("*TCombobox*Listbox.font", ui(12))
-        self.option_add("*TCombobox*Listbox.background", "#ffffff")
+        self.option_add("*TCombobox*Listbox.background", PANEL)
         self.option_add("*TCombobox*Listbox.foreground", TEXT)
-        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self.option_add("*TCombobox*Listbox.selectBackground", SELECT)
         self.option_add("*TCombobox*Listbox.selectForeground", TEXT)
 
     def _build(self):
-        # blue header bar, full width, with the gold rule beneath it
+        # the navy bar, full width, as on the site
         bar = tk.Frame(self, bg=HEADER)
         bar.pack(fill="x")
         inner_bar = tk.Frame(bar, bg=HEADER)
@@ -538,17 +614,16 @@ class App(tk.Tk):
         self.acct_label = tk.Label(self.acct, text="", bg=HEADER,
                                    fg="#a9b6da", font=ui(10))
         self.btn_account = ttk.Button(self.acct, text="Sign in",
+                                      style="Gold.TButton",
                                       command=self._cloud_browser_login)
         self.btn_cloud_sync = ttk.Button(self.acct, text="Sync",
                                          command=self._cloud_sync)
         # Shown only when a newer build is out; stays until updated, so
         # closing the popup with "Later" doesn't lose the way back to it.
         self.btn_update = ttk.Button(self.acct, text="Update available",
-                                     style="Go.TButton",
+                                     style="Gold.TButton",
                                      command=lambda: self._show_update(
                                          force=True))
-
-        tk.Frame(self, bg=ACCENT, height=4).pack(fill="x")
 
         nb = ttk.Notebook(self)
         self.nb = nb
@@ -600,10 +675,10 @@ class App(tk.Tk):
                          highlightthickness=1)
             f.grid(row=0, column=i, padx=6, sticky="nsew", ipady=14)
             self.cards.grid_columnconfigure(i, weight=1)
-            tk.Label(f, text=label.upper(), bg=PANEL, fg=MUTED,
-                     font=ui(8, "bold")).pack(anchor="w", padx=16)
+            tk.Label(f, text=label, bg=PANEL, fg=MUTED,
+                     font=ui(10)).pack(anchor="w", padx=16)
             v = tk.Label(f, text="--", bg=PANEL, fg=TEXT,
-                         font=semi(24))
+                         font=num(22))
             v.pack(anchor="w", padx=16)
             sub = tk.Label(f, text="", bg=PANEL, fg=MUTED, font=ui(9))
             sub.pack(anchor="w", padx=16)
@@ -612,8 +687,8 @@ class App(tk.Tk):
         mid = tk.Frame(self.tab_dash, bg=SURFACE)
         mid.pack(fill="both", expand=True, pady=6)
 
-        tk.Label(mid, text="RECENT FORM", bg=SURFACE, fg=MUTED,
-                 font=ui(8, "bold")).pack(anchor="w", padx=6)
+        tk.Label(mid, text="Recent form", bg=SURFACE, fg=TEXT,
+                 font=semi(12)).pack(anchor="w", padx=6)
         self.form = tk.Frame(mid, bg=SURFACE)
         self.form.pack(anchor="w", padx=6, pady=(4, 14))
 
@@ -632,15 +707,15 @@ class App(tk.Tk):
             tk.Label(r, text=label, bg=SURFACE, fg=MUTED, width=36,
                      anchor="w", font=ui(10)).pack(side="left")
             v = tk.Label(r, text="--", bg=SURFACE, fg=TEXT,
-                         font=semi(11))
+                         font=num(11))
             v.pack(side="left")
             self.stat_rows[key] = v
 
         # --- matchups for whichever deck is selected above
         head2 = tk.Frame(mid, bg=SURFACE)
         head2.pack(fill="x", padx=6, pady=(18, 4))
-        self.mu_title = tk.Label(head2, text="MATCHUPS", bg=SURFACE, fg=MUTED,
-                                 font=ui(8, "bold"))
+        self.mu_title = tk.Label(head2, text="Matchups", bg=SURFACE, fg=TEXT,
+                                 font=semi(12))
         self.mu_title.pack(side="left")
 
         self.mu_tree = ttk.Treeview(
@@ -692,14 +767,14 @@ class App(tk.Tk):
         pane.add(left, stretch="always")
 
         right = tk.Frame(pane, bg=SURFACE, width=380)
-        tk.Label(right, text="CARDS SEEN", bg=SURFACE, fg=MUTED,
-                 font=ui(8, "bold")).pack(anchor="w", padx=10,
+        tk.Label(right, text="Cards seen", bg=SURFACE, fg=TEXT,
+                 font=semi(12)).pack(anchor="w", padx=10,
                                                     pady=(0, 4))
         self.detail = tk.Text(right, bg=PANEL, fg=TEXT, relief="flat",
                               font=("Consolas", 9), wrap="word", width=44,
                               insertbackground=TEXT)
         self.detail.pack(fill="both", expand=True, padx=10, pady=(0, 4))
-        self.detail.tag_configure("hdr", foreground=ACCENT,
+        self.detail.tag_configure("hdr", foreground=TEXT,
                                   font=("Consolas", 9, "bold"))
         self.detail.configure(state="disabled")
 
@@ -889,8 +964,8 @@ class App(tk.Tk):
         self.set_note.pack(anchor="w", pady=(10, 0))
 
         # --- cloud sync
-        tk.Label(wrap, text="CLOUD SYNC", bg=SURFACE, fg=MUTED,
-                 font=ui(8, "bold")).pack(anchor="w", pady=(22, 4))
+        tk.Label(wrap, text="Cloud sync", bg=SURFACE, fg=TEXT,
+                 font=semi(12)).pack(anchor="w", pady=(22, 4))
         tk.Label(wrap,
                  text="Optional. Sign in and your history is kept in your "
                       "account, so two PCs share one record and nothing is "
@@ -936,8 +1011,8 @@ class App(tk.Tk):
         if self.cfg.get("cloud_token"):
             self.cloud_note.configure(text=self._signed_in_text(), fg=MUTED)
 
-        tk.Label(wrap, text="GAME", bg=SURFACE, fg=MUTED,
-                 font=ui(8, "bold")).pack(anchor="w", pady=(18, 4))
+        tk.Label(wrap, text="Game", bg=SURFACE, fg=TEXT,
+                 font=semi(12)).pack(anchor="w", pady=(18, 4))
         self.game_lbl = tk.Label(wrap, text="checking...", bg=SURFACE,
                                  fg=MUTED, font=ui(10))
         self.game_lbl.pack(anchor="w")
@@ -1005,7 +1080,12 @@ class App(tk.Tk):
         tk.Label(wrap, text="Stat tracker for Pokemon TCG Live, built from "
                             "the post-match battle log.",
                  bg=SURFACE, fg=MUTED, font=ui(10),
-                 wraplength=760, justify="left").pack(anchor="w", pady=(4, 8))
+                 wraplength=760, justify="left").pack(anchor="w", pady=(4, 2))
+        # how the automatic copy has been going (cloud.capture_totals)
+        self.capture_lbl = tk.Label(wrap, text="", bg=SURFACE, fg=MUTED,
+                                    font=ui(10), wraplength=760, justify="left")
+        self.capture_lbl.pack(anchor="w", pady=(0, 8))
+        self._capture_line()
 
         if DONATE_URL:
             sup = tk.Frame(wrap, bg=PANEL, highlightbackground=LINE,
@@ -1033,8 +1113,8 @@ class App(tk.Tk):
                        command=lambda: __import__("webbrowser").open(
                            DISCORD_URL)).pack(side="right", padx=14, pady=8)
 
-        tk.Label(wrap, text="CHANGELOG", bg=SURFACE, fg=MUTED,
-                 font=ui(8, "bold")).pack(anchor="w")
+        tk.Label(wrap, text="Changelog", bg=SURFACE, fg=TEXT,
+                 font=semi(12)).pack(anchor="w")
 
         inner = tk.Frame(wrap, bg=SURFACE)
         inner.pack(fill="both", expand=True, pady=(6, 0))
@@ -1140,7 +1220,7 @@ class App(tk.Tk):
         else:
             self.btn_browser.pack(side="left")
 
-    def _cloud_browser_login(self):
+    def _cloud_browser_login(self, new=False):
         """
         Sign in through the browser.
 
@@ -1166,7 +1246,7 @@ class App(tk.Tk):
 
         def run():
             try:
-                self._browser_login(cloud, url)
+                self._browser_login(cloud, url, new)
             finally:
                 self._login_busy = False
 
@@ -1180,27 +1260,36 @@ class App(tk.Tk):
         if gate is not None and gate.is_open:
             gate.set_status(text, fg)
 
-    def _browser_login(self, cloud, url):
+    def _browser_login(self, cloud, url, new=False):
         """The worker half of _cloud_browser_login (runs off the main
-        thread)."""
+        thread). new: open the browser on the sign-up form."""
         ok, info, msg = cloud.start_browser_login(url)
         if not ok:
             self.after(0, lambda: self._login_note(msg, RED))
             return
         import webbrowser
-        self._login_url = info["verify_url"]
+        page = info["verify_url"] + ("&new=1" if new else "")
+        self._login_url = page
         try:
-            webbrowser.open(info["verify_url"])
+            webbrowser.open(page)
         except Exception:
             pass
-        self.after(0, lambda: self._login_note(
-            f"approve this computer in your browser. "
-            f"Code: {info['user_code']}", MUTED))
+        if new:
+            note = ("Finish in your browser: make your account, open the "
+                    "email we send and press Confirm, then press Connect it. "
+                    f"Full Bench signs in by itself. Code: {info['user_code']}")
+        else:
+            note = (f"approve this computer in your browser. "
+                    f"Code: {info['user_code']}")
+        self.after(0, lambda: self._login_note(note, MUTED))
 
-        deadline = time.time() + info.get("expires_in", 600)
+        started = time.time()
+        deadline = started + info.get("expires_in", 600)
         interval = max(1, int(info.get("interval", 2)))
         while time.time() < deadline:
-            time.sleep(interval)
+            # often at first, when it's most likely to be approved soon;
+            # less often while someone's off finding an email
+            time.sleep(interval if time.time() - started < 300 else 5)
             state, token, m = cloud.poll_browser_login(
                 url, info["device_code"])
             if state == "approved":
@@ -1221,7 +1310,8 @@ class App(tk.Tk):
                 self.after(0, lambda mm=m: self._login_note(mm, RED))
                 return
         self.after(0, lambda: self._login_note(
-            "the code expired - try again", RED))
+            "That took too long, so the code ran out. Press the button "
+            "again; if you made your account, choose sign in.", RED))
 
     # ---- the sign-in welcome
     def _maybe_gate(self):
@@ -1304,6 +1394,8 @@ class App(tk.Tk):
         def run():
             ok, msg = cloud.sync(self._server(), token, DB_PATH)
             self.log(f"cloud sync: {msg}")
+            if ok:
+                cloud.report_captures(self._server(), token)
             blocked = cloud.update_required
 
             def done():
@@ -1417,6 +1509,7 @@ class App(tk.Tk):
         dlg = tk.Toplevel(self)
         self._update_dlg = dlg
         dlg.title("Full Bench update")
+        self._dialog_icon(dlg)
         dlg.configure(bg=SURFACE)
         dlg.resizable(False, False)
         # A transient window hides along with a minimised parent, and the
@@ -1433,7 +1526,6 @@ class App(tk.Tk):
         tk.Label(head, text=f"You have {VERSION}", bg=HEADER, fg="#a9b6da",
                  font=ui(9)).pack(anchor="w", padx=18,
                                             pady=(0, 12))
-        tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
 
         import updater
         can, _why = updater.can_self_update()
@@ -1606,6 +1698,22 @@ class App(tk.Tk):
     def log(self, msg):
         self.log_q.put(f"{datetime.now():%H:%M:%S}  {msg}")
 
+    def _ui(self, fn):
+        """Run fn on the window's own thread, soon, without waiting."""
+        self.ui_q.put(fn)
+
+    def _pump_ui(self):
+        try:
+            while True:
+                fn = self.ui_q.get_nowait()
+                try:
+                    fn()
+                except Exception as e:
+                    self.log(f"window update: {e}")
+        except queue.Empty:
+            pass
+        self.after(50, self._pump_ui)
+
     def _drain_log(self):
         touched = False
         try:
@@ -1687,6 +1795,38 @@ class App(tk.Tk):
         if ok:
             self.refresh(keep=True)          # new names in the table too
 
+    def _count_capture(self, kind):
+        """Count how a game's log was saved (cloud.count_capture), and
+        update the line on the About tab."""
+        try:
+            import cloud
+            cloud.count_capture(kind)
+        except Exception as e:
+            self.log(f"capture count: {e}")
+        self._ui(self._capture_line)
+
+    def _capture_line(self):
+        lbl = getattr(self, "capture_lbl", None)
+        if lbl is None:
+            return
+        try:
+            import cloud
+            t = cloud.capture_totals()
+        except Exception:
+            return
+        n = t["auto"] + t["hand"] + t["missed"]
+        if not n:
+            text = "No games captured in the last 30 days."
+        else:
+            text = (f"Last 30 days: {t['auto']} game{'s' if t['auto'] != 1 else ''} "
+                    f"copied by itself, {t['hand']} copied by you when it asked, "
+                    f"{t['missed']} missed.")
+        bad = n >= 3 and t["auto"] < 0.8 * n
+        if bad:
+            text += (" That's more than usual. Tell us on Discord, with "
+                     "Developer mode on so the Activity tab shows what happened.")
+        lbl.configure(text=text, fg=RED if bad else MUTED)
+
     def _problem(self, text):
         """
         Report a problem on the title bar.
@@ -1736,6 +1876,7 @@ class App(tk.Tk):
         import mac_platform
         dlg = tk.Toplevel(self)
         dlg.title("Full Bench needs your OK")
+        self._dialog_icon(dlg)
         dlg.configure(bg=SURFACE)
         dlg.resizable(False, False)
         head = tk.Frame(dlg, bg=HEADER)
@@ -1745,7 +1886,6 @@ class App(tk.Tk):
                              "One thing to allow in System Settings"),
                  bg=HEADER, fg="white", font=semi(13)).pack(
             anchor="w", padx=18, pady=(14, 12))
-        tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
         rows = [
             ("Screen Recording", screen, "screen",
              "So Full Bench can see the result screen. It only looks at "
@@ -1828,14 +1968,19 @@ class App(tk.Tk):
 
         def status(text):
             """Progress from the capture thread, shown on the title bar."""
+            if text == "captured":
+                # copied by itself, unless it had to ask (counted below)
+                if not self._asked:
+                    self._count_capture("auto")
+                self._asked = False
             if text is None or text == "captured":
-                self.after(0, lambda: self._set_status_line())
+                self._ui(self._set_status_line)
             elif text == "copy the battle log":
-                self.after(0, lambda: self.status.configure(
+                self._ui(lambda: self.status.configure(
                     text="\u25cf copy the battle log to save this match",
                     fg="#ff8a80"))
             else:
-                self.after(0, lambda: self.status.configure(
+                self._ui(lambda: self.status.configure(
                     text="\u25cf saving battle log\u2026", fg="#ffd76a"))
 
         def shield(rect, hold_s=None):
@@ -1856,6 +2001,12 @@ class App(tk.Tk):
                 self.log_cover.show(rect)
 
         def prompt(state, seconds=None):
+            if state == "waiting":
+                self._asked = True
+            elif state in ("saved", "missed"):
+                self._count_capture("hand" if state == "saved" else "missed")
+                if state == "missed":
+                    self._asked = False
             if not self.prompt:
                 return
             if state == "waiting":
@@ -1979,9 +2130,9 @@ class App(tk.Tk):
                 tags=("ignored" if excl else (r["result"] or ""),))
 
         # matchups, restricted to the deck chosen above
-        mu_head = "MATCHUPS"
+        mu_head = "Matchups"
         if sel != "All decks":
-            mu_head += f"  \u2014  {sel.upper()}"
+            mu_head += f"  \u2014  {sel}"
         self.mu_title.configure(text=mu_head)
         self.mu_tree.delete(*self.mu_tree.get_children())
         agg = defaultdict(lambda: [0, 0])
@@ -2087,6 +2238,7 @@ class App(tk.Tk):
         result = (r["result"] or "?").upper()
         dlg.title(f"Battle log — {result} vs "
                   f"{r['opponent_archetype'] or 'unknown'}")
+        self._dialog_icon(dlg)
         dlg.configure(bg=SURFACE)
         dlg.geometry(f"720x760+{self.winfo_rootx()+80}+"
                      f"{self.winfo_rooty()+30}")
@@ -2109,7 +2261,6 @@ class App(tk.Tk):
         tk.Label(head, text=sub, bg=HEADER, fg="#a9b6da",
                  font=ui(9)).pack(anchor="w", padx=16,
                                             pady=(0, 12))
-        tk.Frame(dlg, bg=ACCENT, height=4).pack(fill="x")
 
         frame = tk.Frame(dlg, bg=SURFACE)
         frame.pack(fill="both", expand=True, padx=16, pady=(12, 4))

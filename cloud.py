@@ -25,10 +25,13 @@ your opponents', are never uploaded.
 import json
 import os
 import sqlite3
+import ssl
+import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DB_PATH = Path.home() / "ptcgl_matches.db"
@@ -102,7 +105,10 @@ def _headers(token=None):
          "User-Agent": f"FullBench/{APP_VERSION}",
          # The server declines to sync builds older than the current
          # release, so it needs to know which one this is.
-         "X-FullBench-Version": APP_VERSION}
+         "X-FullBench-Version": APP_VERSION,
+         # the Mac build has its own releases; the server mustn't hold it
+         # to the Windows app's minimum version
+         "X-FullBench-Platform": "mac" if sys.platform == "darwin" else "windows"}
     if token:
         h["Authorization"] = f"Bearer {token}"
     return h
@@ -129,7 +135,8 @@ def check_version(base_url=None):
     """
     base_url = normalise_url(base_url or DEFAULT_SERVER)
     try:
-        d = _get(base_url, "/v1/version", None)
+        d = _get(base_url, "/v1/version" + ("?platform=mac"
+                 if sys.platform == "darwin" else ""), None)
     except Exception:
         return None
     latest = d.get("version") or ""
@@ -148,18 +155,43 @@ def check_version(base_url=None):
     }
 
 
+_TLS = []
+
+
+def tls_context():
+    """
+    The certificate list HTTPS checks the server against. None on
+    Windows: Python uses Windows' own list there, as it always has. On a
+    Mac, Python from python.org (and an app built with it) doesn't use
+    the Mac's list, so every request fails with "certificate verify
+    failed" unless it's handed one: certifi's, the list Mozilla keeps.
+    """
+    if not _TLS:
+        ctx = None
+        if sys.platform == "darwin":
+            try:
+                import certifi
+                ctx = ssl.create_default_context(cafile=certifi.where())
+            except Exception:
+                ctx = None
+        _TLS.append(ctx)
+    return _TLS[0]
+
+
 def _post(base_url, path, token, payload):
     req = urllib.request.Request(
         base_url.rstrip("/") + path, data=json.dumps(payload).encode(),
         method="POST", headers=_headers(token))
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+    with urllib.request.urlopen(req, timeout=TIMEOUT,
+                                context=tls_context()) as r:
         return json.loads(r.read().decode())
 
 
 def _get(base_url, path, token):
     req = urllib.request.Request(base_url.rstrip("/") + path,
                                  headers=_headers(token))
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+    with urllib.request.urlopen(req, timeout=TIMEOUT,
+                                context=tls_context()) as r:
         return json.loads(r.read().decode())
 
 
@@ -189,6 +221,9 @@ def _err(e):
         if "not known" in text.lower() or "resolve" in text.lower():
             return "that address does not resolve - check the spelling"
         if "certificate" in text.lower():
+            if sys.platform == "darwin" and tls_context() is None:
+                return ("TLS problem: this Python has no certificate list "
+                        "to check the server against (pip install certifi)")
             return f"TLS problem: {text}"
         return f"could not reach the server ({text or name})"
     if isinstance(e, ValueError):
@@ -593,3 +628,89 @@ def sync(base_url, token, db_path=None):
         return True, msg
     finally:
         conn.close()
+
+
+# ------------------------------------------------------------ capture counts
+#
+# How the automatic copy went, day by day: "auto" (copied by itself),
+# "hand" (it asked and the player copied the log) or "missed". The About
+# tab shows the last 30 days, and after a sync the counts not yet sent
+# go to the server, so a release that stops copying shows up there the
+# same day. Counts only -- no game, name or log.
+
+_CAPTURE_LOCK = threading.Lock()
+CAPTURE_DAYS = 30
+
+
+def _capture_path():
+    import app_paths
+    return app_paths.user_dir() / "capture_counts.json"
+
+
+def _capture_load():
+    try:
+        d = json.loads(_capture_path().read_text(encoding="utf-8"))
+        if isinstance(d, dict):
+            return {"days": d.get("days") or {}, "unsent": d.get("unsent") or {}}
+    except Exception:
+        pass
+    return {"days": {}, "unsent": {}}
+
+
+def _capture_save(d):
+    cut = (datetime.now() - timedelta(days=CAPTURE_DAYS)).strftime("%Y-%m-%d")
+    for k in ("days", "unsent"):
+        d[k] = {day: v for day, v in d[k].items() if day >= cut}
+    try:
+        _capture_path().write_text(json.dumps(d), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def count_capture(kind):
+    """One more game copied "auto", by "hand", or "missed"."""
+    if kind not in ("auto", "hand", "missed"):
+        return
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _CAPTURE_LOCK:
+        d = _capture_load()
+        for k in ("days", "unsent"):
+            d[k].setdefault(day, {}).setdefault(kind, 0)
+            d[k][day][kind] += 1
+        _capture_save(d)
+
+
+def capture_totals():
+    """{"auto": n, "hand": n, "missed": n} over the last 30 days."""
+    with _CAPTURE_LOCK:
+        d = _capture_load()
+    out = {"auto": 0, "hand": 0, "missed": 0}
+    for v in d["days"].values():
+        for k in out:
+            out[k] += int(v.get(k, 0) or 0)
+    return out
+
+
+def report_captures(base_url, token):
+    """Send the counts the server hasn't had yet. Quietly does nothing
+    against a server that doesn't take them."""
+    with _CAPTURE_LOCK:
+        unsent = _capture_load()["unsent"]
+    if not unsent or not token:
+        return False
+    try:
+        _post(normalise_url(base_url), "/v1/captures", token, {"days": unsent})
+    except Exception:
+        return False
+    with _CAPTURE_LOCK:
+        d = _capture_load()
+        # take off what was sent; anything counted meanwhile stays
+        for day, v in unsent.items():
+            left = {k: n - int(v.get(k, 0)) for k, n in d["unsent"].get(day, {}).items()}
+            left = {k: n for k, n in left.items() if n > 0}
+            if left:
+                d["unsent"][day] = left
+            else:
+                d["unsent"].pop(day, None)
+        _capture_save(d)
+    return True

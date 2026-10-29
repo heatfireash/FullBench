@@ -2,9 +2,11 @@
 The sign-in welcome.
 
 Shown over the app each time it opens while nobody is signed in: the app
-dimmed behind it, a big yellow "Sign in / Create an account" button, a
-small "Continue without signing in" link under that, and a short look at
-what an account gives you on fullbench.gg.
+dimmed behind it, a big yellow "Create a free account" button (the
+browser opens on the sign-up form, and the app connects by itself once
+it's done), "I already have an account: sign in" under it, a small
+"Continue without signing in" link, and a short look at what an account
+gives you on fullbench.gg.
 
 It is two borderless windows tied to the main one -- a dimmed grey cover
 the size of the app, and the card on top of it. They are separate because
@@ -22,12 +24,12 @@ from fractions import Fraction
 
 from look import semi, ui
 
-# the app's own colours (ptcgl_gui.py)
-SURFACE = "#ffffff"
-SOFT = "#f8f9fd"
-LINE = "#dbe2ee"
-TEXT = "#12193a"
-MUTED = "#5b6683"
+# the app's own colours (ptcgl_gui.py): paper, white tiles, ink
+SURFACE = "#f6f5f1"
+SOFT = "#ffffff"
+LINE = "#e2dfd5"
+TEXT = "#15140f"
+MUTED = "#6a6558"
 ACCENT = "#f5c518"
 ACCENT_HI = "#ffd43b"
 ACCENT_DK = "#d9ab0f"
@@ -136,7 +138,16 @@ class SignInGate:
         try:
             if self.status is not None:
                 self.status.configure(text=text or " ", fg=fg)
+                # a longer line can make the card taller: fit it again
+                self.root.after_idle(self._relayout)
         except tk.TclError:
+            pass
+
+    def _relayout(self):
+        try:
+            if self._open:
+                self._layout()
+        except Exception:
             pass
 
     # ------------------------------------------------------ following the app
@@ -226,24 +237,37 @@ class SignInGate:
                  bg=SURFACE, fg=MUTED, font=ui(11), justify="center",
                  wraplength=px(640)).pack()
 
-        # the one button that matters: big, yellow, with a lip beneath it
-        lip = tk.Frame(top, bg=ACCENT_DK, width=px(420), height=px(54))
+        # the one button that matters: big and yellow, flat like the
+        # site's Download button
+        lip = tk.Frame(top, bg=ACCENT, width=px(420), height=px(54))
         lip.pack_propagate(False)
         lip.pack(pady=(px(16), 0))
-        btn = tk.Label(lip, text="Sign in / Create an account", bg=ACCENT,
+        btn = tk.Label(lip, text="Create a free account", bg=ACCENT,
                        fg=TEXT, font=semi(16), cursor="hand2")
-        btn.pack(fill="both", expand=True, pady=(0, px(3)))
-        btn.bind("<Button-1>", lambda e: self._signin())
-        btn.bind("<Enter>", lambda e: btn.configure(bg=ACCENT_HI))
-        btn.bind("<Leave>", lambda e: btn.configure(bg=ACCENT))
+        btn.pack(fill="both", expand=True)
+        btn.bind("<Button-1>", lambda e: self._signin(new=True))
+        btn.bind("<Enter>", lambda e: (btn.configure(bg=ACCENT_DK),
+                                       lip.configure(bg=ACCENT_DK)))
+        btn.bind("<Leave>", lambda e: (btn.configure(bg=ACCENT),
+                                       lip.configure(bg=ACCENT)))
 
+        # the other two choices, side by side under the button
+        row = tk.Frame(top, bg=SURFACE)
+        row.pack(pady=(px(8), 0))
+        have = tk.Label(row, text="I already have an account: sign in",
+                        bg=SURFACE, fg=TEXT, font=ui(10, "underline"),
+                        cursor="hand2")
+        have.pack(side="left")
+        have.bind("<Button-1>", lambda e: self._signin(new=False))
+        tk.Label(row, text="\u00b7", bg=SURFACE, fg=MUTED,
+                 font=ui(10)).pack(side="left", padx=px(10))
+        link = tk.Label(row, text="Continue without signing in", bg=SURFACE,
+                        fg=MUTED, font=ui(10, "underline"), cursor="hand2")
+        link.pack(side="left")
         self.status = tk.Label(top, text=self._status_text[0] or " ",
                                bg=SURFACE, fg=self._status_text[1],
                                font=ui(10), wraplength=px(640))
         self.status.pack(pady=(px(8), 0))
-        link = tk.Label(top, text="Continue without signing in", bg=SURFACE,
-                        fg=MUTED, font=ui(10, "underline"), cursor="hand2")
-        link.pack(pady=(px(2), 0))
         link.bind("<Button-1>", lambda e: self._skip())
         link.bind("<Enter>", lambda e: link.configure(fg=TEXT))
         link.bind("<Leave>", lambda e: link.configure(fg=MUTED))
@@ -253,8 +277,8 @@ class SignInGate:
         rule.pack(fill="x", padx=px(SIDE), pady=(px(14), px(10)))
         tk.Frame(rule, bg=LINE, height=1).pack(side="left", fill="x",
                                                expand=True, pady=px(1))
-        tk.Label(rule, text="WHAT YOU GET WITH AN ACCOUNT", bg=SURFACE,
-                 fg=MUTED, font=ui(8, "bold")).pack(side="left", padx=px(12))
+        tk.Label(rule, text="What you get with an account", bg=SURFACE,
+                 fg=TEXT, font=semi(11)).pack(side="left", padx=px(12))
         tk.Frame(rule, bg=LINE, height=1).pack(side="left", fill="x",
                                                expand=True, pady=px(1))
 
@@ -285,7 +309,7 @@ class SignInGate:
                      justify="left", anchor="w",
                      wraplength=max(px(120), tile_w - img_w - px(44))
                      ).pack(anchor="w")
-            tk.Label(inner, text=body, bg=SOFT, fg="#3a445f", font=ui(9),
+            tk.Label(inner, text=body, bg=SOFT, fg="#3d3a33", font=ui(9),
                      justify="left", anchor="w",
                      wraplength=max(px(120), tile_w - img_w - px(44))
                      ).pack(anchor="w", pady=(px(3), 0))
@@ -298,9 +322,13 @@ class SignInGate:
             pady=(px(2), px(12)))
 
     # ----------------------------------------------------------- the clicks
-    def _signin(self):
+    def _signin(self, new=False):
+        """new: the person has no account yet, so the browser opens on
+        the sign-up form."""
         try:
-            self.on_signin()
+            self.on_signin(new=new)
+        except TypeError:
+            self.on_signin()             # an on_signin that takes nothing
         except Exception:
             pass
 

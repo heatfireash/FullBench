@@ -25,9 +25,15 @@ from look import semi, ui
 # warnings -- "don't press Continue" has to read as urgent, and the
 # app's gold accent would look like decoration.
 RED = "#d63031"
-WHITE = "#fafafc"
-BLACK = "#12193a"
+WHITE = "#ffffff"
+BLACK = "#15140f"
 GREEN = "#43c06a"
+# the rest matches the app and fullbench.gg: ink on white, a thin warm
+# edge, blue for a win and orange for a loss
+MUTED = "#6a6558"
+EDGE = "#e2dfd5"
+WIN = "#1d5fd1"
+LOSS = "#c2410c"
 
 
 class ClickShield:
@@ -232,7 +238,7 @@ class ExportPrompt:
         w.withdraw()
         w.overrideredirect(True)
         w.attributes("-topmost", True)
-        w.configure(bg="#dbe2ee")
+        w.configure(bg=EDGE)
         card = tk.Frame(w, bg=WHITE)
         card.pack(fill="both", expand=True, padx=1, pady=1)
         tk.Frame(card, bg=RED, width=5).pack(side="left", fill="y")
@@ -241,10 +247,10 @@ class ExportPrompt:
         self.dot.pack(side="left", padx=(12, 8))
         right = tk.Frame(card, bg=WHITE)
         right.pack(side="right", fill="y", padx=(6, 12))
-        self.count = tk.Label(right, bg=WHITE, fg="#5b6683",
+        self.count = tk.Label(right, bg=WHITE, fg=MUTED,
                               font=ui(8, "bold"))
         self.count.pack(anchor="e", pady=(10, 2))
-        self.skip = tk.Label(right, text="Skip", bg="#f1f4fa", fg=BLACK,
+        self.skip = tk.Label(right, text="Skip", bg="#efede6", fg=BLACK,
                              font=semi(9), padx=10, pady=2,
                              cursor="hand2")
         self.skip.pack(anchor="e")
@@ -255,7 +261,7 @@ class ExportPrompt:
                               font=semi(11))
         self.title.pack(fill="x")
         # wraps inside the space left of the countdown, not under it
-        self.sub = tk.Label(text, bg=WHITE, fg="#5b6683", anchor="w",
+        self.sub = tk.Label(text, bg=WHITE, fg=MUTED, anchor="w",
                             justify="left", wraplength=215,
                             font=ui(9))
         self.sub.pack(fill="x")
@@ -344,13 +350,13 @@ class MatchToast:
     W, H = 390, 66
 
     _SYNC = {
-        "saving": ("SAVED", "#5b6683"),
-        "syncing": ("SYNCING…", "#5b6683"),
-        "synced": ("SYNCED", "#14752f"),
-        "local": ("SAVED", "#5b6683"),        # not signed in / auto-sync off
-        "failed": ("NOT SYNCED", "#c5221f"),
+        "saving": ("Saved", MUTED),
+        "syncing": ("Syncing…", MUTED),
+        "synced": ("Synced", WIN),
+        "local": ("Saved", MUTED),            # not signed in / auto-sync off
+        "failed": ("Not synced", LOSS),
     }
-    _RESULT = {"win": ("Win", "#14752f"), "loss": ("Loss", "#c5221f")}
+    _RESULT = {"win": ("Win", WIN), "loss": ("Loss", LOSS)}
 
     def __init__(self, root):
         self.root = root
@@ -361,7 +367,7 @@ class MatchToast:
 
     # --- main thread only
     def show(self, result, opponent, turns=None, sync="saving"):
-        word, colour = self._RESULT.get(result, ("Recorded", "#5b6683"))
+        word, colour = self._RESULT.get(result, ("Recorded", MUTED))
         if self.win is None or not tk.Toplevel.winfo_exists(self.win):
             self._build()
         self._turns = turns
@@ -445,7 +451,7 @@ class MatchToast:
         w.withdraw()
         w.overrideredirect(True)
         w.attributes("-topmost", True)
-        w.configure(bg="#dbe2ee")            # 1px border colour
+        w.configure(bg=EDGE)            # 1px border colour
         card = tk.Frame(w, bg=WHITE)
         card.pack(fill="both", expand=True, padx=1, pady=1)
         self.stripe = tk.Frame(card, bg=GREEN, width=5)
@@ -462,7 +468,7 @@ class MatchToast:
         self.title = tk.Label(text, bg=WHITE, fg=BLACK, anchor="w",
                               font=semi(11))
         self.title.pack(fill="x")
-        self.sub = tk.Label(text, bg=WHITE, fg="#5b6683", anchor="w",
+        self.sub = tk.Label(text, bg=WHITE, fg=MUTED, anchor="w",
                             font=ui(9))
         self.sub.pack(fill="x")
         for x in (w, card, self.stripe, self.dot, text, self.title,

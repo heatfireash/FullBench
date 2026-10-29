@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.36.2"
+VERSION = "1.37.0"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -17,6 +17,30 @@ DONATE_LABEL = "Support Full Bench on Ko-fi"
 DISCORD_URL = "https://discord.gg/9HHgfca4At"
 
 CHANGELOG = [
+    ("1.37.0", "2026-10-29", [
+        "A new look to match fullbench.gg: a paper background with thin "
+        "lines, the tab you're on in black, numbers that line up, and "
+        "winning in blue and losing in orange, which colour-blind players "
+        "can tell apart more easily than green and red.",
+        "Making an account is easier. The welcome now has a Create a free "
+        "account button that opens the sign-up form in your browser; make "
+        "the account, confirm the email, press Connect it, and Full Bench "
+        "signs in by itself. If you already have one, sign in from the "
+        "link under it.",
+        "The app waits up to an hour for you to finish in the browser, "
+        "instead of ten minutes, so there's time to find the confirmation "
+        "email.",
+        "The About tab shows how capturing has gone over the last 30 days: "
+        "games copied by themselves, games you copied when the app asked, "
+        "and games missed.",
+        "The app now tells fullbench.gg those three numbers when it syncs "
+        "(only the counts, nothing about the games), so if an update ever "
+        "stops games being copied, it shows up the same day instead of "
+        "waiting for someone to notice.",
+        "The update window, and the window that shows a battle log, now "
+        "have the Full Bench icon instead of a blank one, in the title bar "
+        "and on the taskbar.",
+    ]),
     ("1.36.2", "2026-10-26", [
         "Fixed games not being captured since 1.36.1. After clicking "
         "Battle Log, the pointer waited right on top of the copy icon, "
