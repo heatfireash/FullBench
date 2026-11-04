@@ -37,8 +37,12 @@ def _defs_path():
     That way the definitions can be updated without a rebuild — drop a
     new archetypes.json next to FullBench.exe and it wins.
     """
-    beside = (Path(sys.executable).parent if getattr(sys, "frozen", False)
-              else HERE) / "archetypes.json"
+    try:
+        import app_paths            # beside the exe; Application Support on a Mac
+        beside = app_paths.user_dir() / "archetypes.json"
+    except ImportError:
+        beside = (Path(sys.executable).parent if getattr(sys, "frozen", False)
+                  else HERE) / "archetypes.json"
     if beside.exists():
         return beside
     return Path(getattr(sys, "_MEIPASS", HERE)) / "archetypes.json"

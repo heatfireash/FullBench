@@ -12,6 +12,10 @@ YouTube video, a Discord channel or an Explorer window open on the
 install folder all carry the same words, and used to make the app think
 the game was running -- and start tracking -- with the game closed.
 
+On a Mac the same rule holds, done the Mac way (mac_platform.py): the
+window has to belong to the game's app, recognised by its bundle id
+(com.pokemon.pokemontcgl), whatever any window is called.
+
 The state only changes after two readings in a row agree, so a single
 odd reading (a window mid-close, a slow process lookup) cannot flip
 tracking on and off.
@@ -130,9 +134,25 @@ def is_game_window(title, cls, exe):
     return False
 
 
-def game_window(require_visible=False):
-    """The game's pygetwindow window, or None. Also used by autocopy."""
+def _mac_window(require_visible):
     global last_match
+    try:
+        import mac_platform
+    except ImportError:
+        return None
+    w = mac_platform.game_window(require_visible=require_visible)
+    if w is not None:
+        last_match = (f"'{w.title}' (pid {w.pid}, {w.bundle_id or '?'}, "
+                      f"{w.width}x{w.height})")
+    return w
+
+
+def game_window(require_visible=False):
+    """The game's pygetwindow window, or None. Also used by autocopy.
+    (On a Mac, mac_platform's stand-in with the same shape.)"""
+    global last_match
+    if sys.platform == "darwin":
+        return _mac_window(require_visible)
     try:
         import pygetwindow as gw
         wins = gw.getAllWindows()
@@ -155,6 +175,12 @@ def game_window(require_visible=False):
 # ------------------------------------------------------------ detection
 
 def _by_window():
+    if sys.platform == "darwin":
+        try:
+            import mac_platform  # noqa: F401
+        except ImportError:
+            return None
+        return game_window() is not None
     try:
         import pygetwindow  # noqa: F401
     except ImportError:
@@ -222,6 +248,10 @@ def watch(on_start=None, on_stop=None, stop=None, poll=3.0, confirm=2):
 if __name__ == "__main__":
     # py game_watch.py  -- lists every window that mentions the game and
     # says which one, if any, counts as the game.
+    if sys.platform == "darwin":
+        print("game window:", game_window() or "none")
+        print("running:", is_running(), "|", last_match or "-")
+        sys.exit(0)
     try:
         import pygetwindow as gw
         for w in gw.getAllWindows():

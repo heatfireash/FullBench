@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS matches (
     opponent_mons   TEXT,
     deck_edited     INTEGER DEFAULT 0,  -- unused since 1.33.0 (renaming removed)
     server_named    INTEGER DEFAULT 0,  -- 1 = names came from fullbench.gg
+    deck_fixed      INTEGER,        -- cluster.NAMING_VERSION once the app
+    opp_fixed       INTEGER,        --   named it; then the name sticks
     player_moves    TEXT,           -- json: {pokemon: [attacks seen]}
     opponent_moves  TEXT,           -- used to identify which print was played
     player_damage   INTEGER,
@@ -100,6 +102,7 @@ EXPECTED_COLUMNS = {
     "player_moves": "TEXT", "opponent_moves": "TEXT",
     "deck_edited": "INTEGER",
     "server_named": "INTEGER",
+    "deck_fixed": "INTEGER", "opp_fixed": "INTEGER",
     "excluded": "TEXT",
     "player_mons": "TEXT",
     "opponent_mons": "TEXT",
@@ -395,24 +398,35 @@ def relabel_from_clusters(conn, verbose=True):
     Runs after each match. Any match fullbench.gg has named is left
     alone: while you're signed in, names come from there, and this only
     names what the server hasn't yet -- or everything, signed out.
+
+    Names stick, as they do on fullbench.gg. A game this has named keeps
+    its name; a new game takes the name most of its group already has,
+    so one odd game can't rename a deck. cluster.NAMING_VERSION going up
+    is the one thing that names every game again.
     """
     try:
         import cluster
     except ImportError:
         return 0
+    version = getattr(cluster, "NAMING_VERSION", 1)
     total = 0
-    for label_col, mons_col in (("deck_label", "player_mons"),
-                                ("opponent_archetype", "opponent_mons")):
+    for label_col, mons_col, fixed_col in (
+            ("deck_label", "player_mons", "deck_fixed"),
+            ("opponent_archetype", "opponent_mons", "opp_fixed")):
         try:
             rows = conn.execute(
                 f"SELECT id, {label_col}, {mons_col}, "
-                f"COALESCE(server_named,0) FROM matches").fetchall()
+                f"COALESCE(server_named,0), COALESCE({fixed_col},0) "
+                f"FROM matches").fetchall()
         except sqlite3.OperationalError:
             continue
-        sides = []
-        for mid, label, mons, served in rows:
+        sides, kept, current = [], {}, {}
+        for mid, label, mons, served, fixed in rows:
             if served:
                 continue
+            current[mid] = label
+            if fixed >= version and label:
+                kept[mid] = label
             try:
                 d = json.loads(mons or "{}")
             except Exception:
@@ -422,14 +436,22 @@ def relabel_from_clusters(conn, verbose=True):
         if not sides:
             continue
         assignment, _ = cluster.build(sides)
+        groups = {}
+        for mid, g in assignment.items():
+            groups.setdefault(g, []).append(mid)
         changed = 0
-        for mid, name in assignment.items():
-            cur = conn.execute(f"SELECT {label_col} FROM matches WHERE id=?",
-                               (mid,)).fetchone()[0]
-            if name and name != cur:
+        for mid, fresh in assignment.items():
+            if mid in kept:
+                continue
+            name = (cluster.settled_name(fresh, groups[fresh], kept)
+                    if hasattr(cluster, "settled_name") else fresh)
+            if name and name != current.get(mid):
                 conn.execute(f"UPDATE matches SET {label_col}=? WHERE id=?",
                              (name, mid))
                 changed += 1
+            if name and name != "unknown":
+                conn.execute(f"UPDATE matches SET {fixed_col}=? WHERE id=?",
+                             (version, mid))
         if changed:
             conn.commit()
         total += changed
@@ -582,7 +604,14 @@ def watch_clipboard(me=None, deck=None, poll=0.4, stop=None,
 
         if text and text != last:
             last = text
-            if looks_like_battle_log(text):
+            if not looks_like_battle_log(text) and "Setup" in text[:400]:
+                # a battle log, but of a game that ended before both
+                # players had a turn (a concede on turn one): there's
+                # nothing in it to record. Say so, or the capture looks
+                # like it went nowhere.
+                print("[tracker]   battle log copied, but the game ended "
+                      "before both players had a turn - nothing to save")
+            elif looks_like_battle_log(text):
                 try:
                     if not store(conn, text, me, deck, ignore_no_attack):
                         print("[tracker]   already filed, skipped")

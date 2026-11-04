@@ -543,6 +543,7 @@ def pokemon_from_parse(d, side):
     mons |= set(d.get(f"{prefix}_in_play") or ())
     uses = dict(d.get(f"{prefix}_ability_uses") or {})
     zero = dict(d.get(f"{prefix}_zero_attacks") or {})
+    moves = dict(d.get(f"{prefix}_moves") or {})
     out = {}
     for m in sorted(mons):
         if not is_identity_card(m):
@@ -550,5 +551,9 @@ def pokemon_from_parse(d, side):
         v = {"d": int(dmg.get(m, 0)), "u": int(uses.get(m, 0))}
         if zero.get(m):
             v["a"] = int(zero[m])      # attacks that did no damage
+        if moves.get(m):
+            # the attacks and abilities it used, by name: they tell two
+            # cards with one name apart (there are two Gengar ex)
+            v["m"] = sorted(moves[m])[:8]
         out[m] = v
     return out

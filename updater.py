@@ -113,7 +113,9 @@ def download(url, sha256, size, version, progress=None, cancel=None):
     try:
         req = urllib.request.Request(url, headers={
             "User-Agent": "FullBench-updater"})
-        with urllib.request.urlopen(req, timeout=30) as r, \
+        from cloud import tls_context
+        with urllib.request.urlopen(req, timeout=30,
+                                    context=tls_context()) as r, \
                 open(part, "wb") as f:
             total = int(r.headers.get("Content-Length") or size or 0)
             while True:

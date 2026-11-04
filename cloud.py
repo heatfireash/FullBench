@@ -160,20 +160,32 @@ _TLS = []
 
 def tls_context():
     """
-    The certificate list HTTPS checks the server against. None on
-    Windows: Python uses Windows' own list there, as it always has. On a
-    Mac, Python from python.org (and an app built with it) doesn't use
-    the Mac's list, so every request fails with "certificate verify
+    The certificate list HTTPS checks the server against.
+
+    On a Mac, Python from python.org (and an app built with it) doesn't
+    use the Mac's list, so every request fails with "certificate verify
     failed" unless it's handed one: certifi's, the list Mozilla keeps.
+
+    On Windows, Python reads the roots already saved on the PC -- but
+    unlike Edge, it never asks Windows to fetch one it doesn't have yet.
+    A PC that has never needed fullbench.gg's current root then checks
+    the certificate against an old, expired one and fails with
+    "certificate has expired" (a player hit this signing in to 1.37).
+    So Windows gets certifi's list as well as its own: a certificate is
+    accepted if either list vouches for it, so nothing that worked before
+    stops working, and an out-of-date PC works too.
     """
     if not _TLS:
         ctx = None
-        if sys.platform == "darwin":
-            try:
-                import certifi
+        try:
+            import certifi
+            if sys.platform == "darwin":
                 ctx = ssl.create_default_context(cafile=certifi.where())
-            except Exception:
-                ctx = None
+            else:
+                ctx = ssl.create_default_context()      # the PC's own
+                ctx.load_verify_locations(cafile=certifi.where())
+        except Exception:
+            ctx = None          # Python's default, as before
         _TLS.append(ctx)
     return _TLS[0]
 
@@ -224,6 +236,11 @@ def _err(e):
             if sys.platform == "darwin" and tls_context() is None:
                 return ("TLS problem: this Python has no certificate list "
                         "to check the server against (pip install certifi)")
+            if "expired" in text.lower():
+                return ("TLS problem: the server's certificate looks expired "
+                        "to this PC. Check the PC's date and time, and turn "
+                        "off HTTPS or web scanning in your antivirus, then "
+                        f"try again. ({text})")
             return f"TLS problem: {text}"
         return f"could not reach the server ({text or name})"
     if isinstance(e, ValueError):
@@ -689,6 +706,19 @@ def capture_totals():
         for k in out:
             out[k] += int(v.get(k, 0) or 0)
     return out
+
+
+def report_opened(base_url):
+    """Tell fullbench.gg the app was opened on a new computer for the first
+    time: one count, so the admins can see how many downloads get as far
+    as opening the app. Nothing about the person or the computer goes with
+    it -- the version and Windows or Mac are in the headers every request
+    has. True once the server has it."""
+    try:
+        _post(normalise_url(base_url), "/v1/opened", "", {})
+        return True
+    except Exception:
+        return False
 
 
 def report_captures(base_url, token):

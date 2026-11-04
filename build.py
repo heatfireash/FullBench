@@ -171,6 +171,10 @@ def main():
         "pygetwindow": "pygetwindow",
         "pydirectinput": "pydirectinput",
         "PIL": "pillow",                   # logo generation
+        # Mozilla's certificate list, alongside Windows' own (see
+        # cloud.tls_context): without it a PC with an out-of-date list
+        # can't sign in
+        "certifi": "certifi",
     }
     missing = []
     for mod, pkg in NEEDED.items():
@@ -212,7 +216,7 @@ def main():
     # the Mac half of the app has no business in the Windows exe
     args += ["--exclude-module", "mac_platform"]
     for mod in ("pyperclip", "cv2", "numpy", "mss",
-                "pygetwindow", "pydirectinput"):
+                "pygetwindow", "pydirectinput", "certifi"):
         args += ["--hidden-import", mod]
     args += ["--icon", "icon.ico"]
     args.append("ptcgl_gui.py")

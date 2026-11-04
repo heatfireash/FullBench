@@ -1,5 +1,6 @@
 """
-Settings, and registering the app to start with Windows.
+Settings, and registering the app to start with Windows (or, on a Mac,
+when you log in).
 
 Settings live in a JSON file beside the exe (or beside the scripts when
 running from source), so a user can delete the folder and leave nothing
@@ -10,11 +11,19 @@ Windows startup uses the per-user Run key:
 That needs no administrator rights, only affects this user, and is
 visible in Task Manager's Startup tab so it can be turned off there too.
 Nothing is written to the registry unless the user ticks the box.
+
+On a Mac it's a login item: a small file in ~/Library/LaunchAgents that
+opens Full Bench when you log in. No admin rights either, and it shows
+in System Settings under General > Login Items.
 """
 
 import json
+import plistlib
+import subprocess
 import sys
 from pathlib import Path
+
+import app_paths
 
 APP_KEY = "FullBench"
 
@@ -35,12 +44,15 @@ DEFAULTS = {
 
 
 def _base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).parent
+    # beside the exe on Windows, Application Support in a Mac app
+    return app_paths.user_dir()
 
 
 SETTINGS_PATH = _base_dir() / "settings.json"
+MAC = sys.platform == "darwin"
+LOGIN_LABEL = "gg.fullbench.app"
+LOGIN_PLIST = (Path.home() / "Library" / "LaunchAgents"
+               / f"{LOGIN_LABEL}.plist")
 
 
 def load():
@@ -75,8 +87,47 @@ def _launch_command():
     return f'"{runner}" "{script}"'
 
 
+def _mac_app_path():
+    """The Full Bench.app this is running from, or None from source."""
+    if not getattr(sys, "frozen", False):
+        return None
+    for p in Path(sys.executable).parents:
+        if p.suffix == ".app":
+            return p
+    return None
+
+
+def _mac_command():
+    app = _mac_app_path()
+    if app:
+        return ["/usr/bin/open", "-a", str(app)]
+    return [sys.executable, str(Path(__file__).parent / "ptcgl_gui.py")]
+
+
+def _mac_set_startup(enable):
+    try:
+        if enable:
+            LOGIN_PLIST.parent.mkdir(parents=True, exist_ok=True)
+            with open(LOGIN_PLIST, "wb") as f:
+                plistlib.dump({"Label": LOGIN_LABEL,
+                               "ProgramArguments": _mac_command(),
+                               "RunAtLoad": True,
+                               "ProcessType": "Interactive"}, f)
+            return True, "will start when you log in"
+        if LOGIN_PLIST.exists():
+            # stop launchd tracking it too, so nothing lingers
+            subprocess.run(["launchctl", "remove", LOGIN_LABEL],
+                           capture_output=True, timeout=5)
+            LOGIN_PLIST.unlink()
+        return True, "will not start when you log in"
+    except Exception as e:
+        return False, f"couldn't change the login item: {e}"
+
+
 def startup_enabled():
     """True if we're registered to run at login."""
+    if MAC:
+        return LOGIN_PLIST.exists()
     try:
         import winreg
     except ImportError:
@@ -99,6 +150,8 @@ def set_startup(enable):
 
     Non-Windows platforms report cleanly instead of raising.
     """
+    if MAC:
+        return _mac_set_startup(enable)
     try:
         import winreg
     except ImportError:

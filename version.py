@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.37.0"
+VERSION = "1.37.2"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -17,6 +17,20 @@ DONATE_LABEL = "Support Full Bench on Ko-fi"
 DISCORD_URL = "https://discord.gg/9HHgfca4At"
 
 CHANGELOG = [
+    ("1.37.2", "2026-11-04", [
+        "The app syncs when it opens, so a game that didn't upload because "
+        "fullbench.gg couldn't be reached goes up the next time you start "
+        "the app, without waiting for your next game.",
+        "The first time the app opens on a computer, it tells fullbench.gg "
+        "so, once, with only the app's version and Windows or Mac: it shows "
+        "how many downloads get as far as opening the app.",
+    ]),
+    ("1.37.1", "2026-10-30", [
+        "Fixed signing in failing with \"certificate has expired\" on some "
+        "PCs. The app now checks fullbench.gg's certificate against "
+        "Mozilla's list of certificate authorities as well as the PC's own, "
+        "so a PC whose list is out of date can still connect.",
+    ]),
     ("1.37.0", "2026-10-29", [
         "A new look to match fullbench.gg: a paper background with thin "
         "lines, the tab you're on in black, numbers that line up, and "

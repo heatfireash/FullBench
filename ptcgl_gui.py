@@ -42,6 +42,14 @@ except ImportError:
     DISCORD_URL = ""
 DB_PATH = Path.home() / "ptcgl_matches.db"
 
+# A computer that's never had the app: no settings and no games yet,
+# checked before this start makes either.
+try:
+    import settings as _settings_for_first_run
+    FIRST_RUN = not (_settings_for_first_run.SETTINGS_PATH.exists() or DB_PATH.exists())
+except Exception:
+    FIRST_RUN = False
+
 # The same look as fullbench.gg: ink on paper with thin lines, the navy
 # kept for the bar across the top (the logo sits on it), and yellow saved
 # for the few things that matter -- Sign in, an update, a selected row.
@@ -200,6 +208,11 @@ def avg(xs):
 
 # ----------------------------------------------------------------- app
 
+# How long after opening the app it syncs, once the window is up and the
+# update check has had its turn.
+SYNC_AT_START_MS = 2500
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -258,6 +271,10 @@ class App(tk.Tk):
         import settings as settings_mod
         self.settings_mod = settings_mod
         self.cfg = settings_mod.load()
+        if FIRST_RUN and not self.cfg.get("opened_sent"):
+            # counted once, when it can reach fullbench.gg (_sync_at_start)
+            self.cfg["opened_pending"] = True
+            settings_mod.save(self.cfg)
 
         # the exe the last update replaced, if this is its first start
         try:
@@ -320,6 +337,9 @@ class App(tk.Tk):
         self._gate = None
         self._gate_done = False         # "continue without" this session
         self.after(900, self._maybe_gate)
+        # catch up on anything a failed sync left behind: closing and
+        # opening the app is the first thing most people try
+        self.after(SYNC_AT_START_MS, self._sync_at_start)
 
     # ------------------------------------------------------------ Mac
 
@@ -1378,6 +1398,34 @@ class App(tk.Tk):
             text="signed out on this computer - your matches stay here and "
                  "in your account", fg=MUTED)
 
+    # one sync at a time: the one at start-up and the one after a game
+    # can meet, and two pulling at once could write a game down twice
+    _sync_lock = threading.Lock()
+
+    def _sync_at_start(self):
+        """Sync once when the app opens, if it's signed in with automatic
+        sync on. Every game a sync missed goes up then: a sync sends
+        whatever the server doesn't have, not just the newest game."""
+        if self.cfg.get("opened_pending"):
+            self._report_opened()
+        if self.cfg.get("cloud_token") and self.cfg.get("cloud_auto_sync", True):
+            self._cloud_sync(quiet=True)
+
+    def _report_opened(self):
+        """The one "opened for the first time" count (cloud.report_opened),
+        tried again at the next start if fullbench.gg can't be reached."""
+        import cloud
+
+        def run():
+            if cloud.report_opened(self._server()):
+                self.after(0, done)
+
+        def done():
+            self.cfg.pop("opened_pending", None)
+            self.cfg["opened_sent"] = True
+            self.settings_mod.save(self.cfg)
+        threading.Thread(target=run, daemon=True).start()
+
     def _cloud_sync(self, quiet=False, on_done=None):
         """on_done(ok) is called on the main thread when the sync ends."""
         import cloud
@@ -1392,7 +1440,8 @@ class App(tk.Tk):
             self.cloud_note.configure(text="syncing\u2026", fg=MUTED)
 
         def run():
-            ok, msg = cloud.sync(self._server(), token, DB_PATH)
+            with self._sync_lock:
+                ok, msg = cloud.sync(self._server(), token, DB_PATH)
             self.log(f"cloud sync: {msg}")
             if ok:
                 cloud.report_captures(self._server(), token)
