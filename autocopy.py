@@ -608,6 +608,24 @@ def _is_new_log(cur, before):
     return cur != before_text
 
 
+# Why the last copy didn't work, for the counts the app sends (cloud.
+# count_capture): "no-icon" (the battle log's copy button was never seen),
+# "not-copied" (it was pressed, but no log reached the clipboard),
+# "not-english" (something was copied, but not a log the app can read:
+# usually the game in another language), "closed" (the log closed before
+# the copy) or "gone" (nothing left on screen to try again with).
+last_why = None
+
+
+def _shape(win):
+    """ "16:9" or "other": the game window's shape, which the picture
+    matching depends on."""
+    try:
+        return "16:9" if abs(win.width / win.height - 16 / 9) < 0.03 else "other"
+    except Exception:
+        return "other"
+
+
 def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
             on_status=None, before=None, on_cover=None, template=None):
     """
@@ -624,6 +642,7 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
 
     Returns True if a battle log reached the clipboard.
     """
+    global last_why
     t_start = time.time()
     if before is None:
         before = _clip_state()
@@ -729,6 +748,7 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
             pydirectinput.keyDown("ctrl"); pydirectinput.press("a"); pydirectinput.keyUp("ctrl")
             pydirectinput.keyDown("ctrl"); pydirectinput.press("c"); pydirectinput.keyUp("ctrl")
     if not clicked and btn_xy is None:
+        last_why = "no-icon"
         return False, None
 
     # confirm: wait for the clipboard to actually change to a log
@@ -754,9 +774,21 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
             else:
                 # the panel closed: go straight to the retry
                 print("[autocopy]   copy icon gone, not clicking again")
-                break
+                last_why = "closed"
+                return False, None
         time.sleep(0.06)
 
+    if not isinstance(clicked, tuple):
+        last_why = "no-icon"
+    else:
+        # something new on the clipboard that isn't a log: most likely the
+        # game's log in another language
+        cur = _clipboard()
+        before_seq = before[0] if isinstance(before, tuple) else None
+        seq = _clip_seq()
+        changed = (seq != before_seq) if (seq is not None and before_seq is not None) \
+            else (cur != (before[1] if isinstance(before, tuple) else before))
+        last_why = "not-english" if (changed and cur) else "not-copied"
     print(f"[autocopy]   copy not confirmed after "
           f"{time.time()-t_start:.1f}s ("
           + (f"{clicks} click{'s' if clicks > 1 else ''} on the icon)"
@@ -801,9 +833,11 @@ def retry_copy(win, template, copy_template, expected, on_status, before,
     Battle Log button again would close it); if it's closed and the
     Battle Log button is showing, do the whole thing again.
     """
+    global last_why
     try:
         frame = grab(win)
     except Exception:
+        last_why = "gone"
         return False, None
     if copy_template is not None:
         cxy, _ = locate(frame, copy_template, expected,
@@ -816,6 +850,7 @@ def retry_copy(win, template, copy_template, expected, on_status, before,
     if xy:
         return do_copy(win, xy, copy_template, expected, on_status, before,
                        on_cover, template)
+    last_why = "gone"
     return False, None
 
 
@@ -888,6 +923,7 @@ def _watch(poll=POLL_S, stop=None, on_status=None, on_shield=None,
     on_prompt("waiting", seconds) / ("saved") / ("missed") drives the
     "copy the log yourself" pop-up; setting `skip` ends the wait early.
     """
+    global last_why
     template, copy_template, cont_template = load_templates()
 
     calib_h = None
@@ -968,9 +1004,12 @@ def _watch(poll=POLL_S, stop=None, on_status=None, on_shield=None,
               f"find {(t_found-t_grab)*1000:.0f}, "
               f"cover {(t_done-t_found)*1000:.0f})")
         why = None
+        last_why = None
+        first_why = None
         try:
             ok, text = do_copy(win, xy, copy_template, expected, on_status,
                                before, on_cover, template)
+            first_why = last_why
             stopped = stop is not None and stop.is_set()
             if not ok and not stopped:
                 # Continue stays covered, and the cover's clock restarts
@@ -1001,7 +1040,9 @@ def _watch(poll=POLL_S, stop=None, on_status=None, on_shield=None,
             if on_cover:
                 on_cover(None)
             if on_prompt and why is not None:
-                on_prompt("saved" if ok else "missed")
+                on_prompt("saved" if ok else "missed",
+                          info={"why": first_why or last_why or "other",
+                                "shape": _shape(win)})
         last_fire = time.time()
         armed = False
 

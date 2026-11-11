@@ -653,7 +653,9 @@ def sync(base_url, token, db_path=None):
 # "hand" (it asked and the player copied the log) or "missed". The About
 # tab shows the last 30 days, and after a sync the counts not yet sent
 # go to the server, so a release that stops copying shows up there the
-# same day. Counts only -- no game, name or log.
+# same day. From 1.37.3, with each game it couldn't copy by itself, why
+# (autocopy.last_why) and whether the game window was 16:9. Counts only
+# -- no game, name or log.
 
 _CAPTURE_LOCK = threading.Lock()
 CAPTURE_DAYS = 30
@@ -668,24 +670,28 @@ def _capture_load():
     try:
         d = json.loads(_capture_path().read_text(encoding="utf-8"))
         if isinstance(d, dict):
-            return {"days": d.get("days") or {}, "unsent": d.get("unsent") or {}}
+            return {k: d.get(k) or {} for k in ("days", "unsent", "why_unsent")}
     except Exception:
         pass
-    return {"days": {}, "unsent": {}}
+    return {"days": {}, "unsent": {}, "why_unsent": {}}
 
 
 def _capture_save(d):
     cut = (datetime.now() - timedelta(days=CAPTURE_DAYS)).strftime("%Y-%m-%d")
-    for k in ("days", "unsent"):
-        d[k] = {day: v for day, v in d[k].items() if day >= cut}
+    for k in ("days", "unsent", "why_unsent"):
+        d[k] = {day: v for day, v in d.get(k, {}).items() if day >= cut}
     try:
         _capture_path().write_text(json.dumps(d), encoding="utf-8")
     except OSError:
         pass
 
 
-def count_capture(kind):
-    """One more game copied "auto", by "hand", or "missed"."""
+WHY_CODES = ("no-icon", "not-copied", "not-english", "closed", "gone", "other")
+
+
+def count_capture(kind, info=None):
+    """One more game copied "auto", by "hand", or "missed". info: for one
+    it couldn't copy by itself, {"why": ..., "shape": "16:9" or "other"}."""
     if kind not in ("auto", "hand", "missed"):
         return
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -694,6 +700,12 @@ def count_capture(kind):
         for k in ("days", "unsent"):
             d[k].setdefault(day, {}).setdefault(kind, 0)
             d[k][day][kind] += 1
+        if kind != "auto" and isinstance(info, dict):
+            why = info.get("why") if info.get("why") in WHY_CODES else "other"
+            shape = "16:9" if info.get("shape") == "16:9" else "other"
+            key = f"{why}|{shape}"
+            w = d["why_unsent"].setdefault(day, {})
+            w[key] = w.get(key, 0) + 1
         _capture_save(d)
 
 
@@ -725,22 +737,26 @@ def report_captures(base_url, token):
     """Send the counts the server hasn't had yet. Quietly does nothing
     against a server that doesn't take them."""
     with _CAPTURE_LOCK:
-        unsent = _capture_load()["unsent"]
-    if not unsent or not token:
+        loaded = _capture_load()
+        unsent, why = loaded["unsent"], loaded["why_unsent"]
+    if not (unsent or why) or not token:
         return False
     try:
-        _post(normalise_url(base_url), "/v1/captures", token, {"days": unsent})
+        # "why" in a key of its own: a server from before 1.37.3 ignores it
+        _post(normalise_url(base_url), "/v1/captures", token,
+              {"days": unsent, "why": why})
     except Exception:
         return False
     with _CAPTURE_LOCK:
         d = _capture_load()
         # take off what was sent; anything counted meanwhile stays
-        for day, v in unsent.items():
-            left = {k: n - int(v.get(k, 0)) for k, n in d["unsent"].get(day, {}).items()}
-            left = {k: n for k, n in left.items() if n > 0}
-            if left:
-                d["unsent"][day] = left
-            else:
-                d["unsent"].pop(day, None)
+        for key, sent in (("unsent", unsent), ("why_unsent", why)):
+            for day, v in sent.items():
+                left = {k: n - int(v.get(k, 0)) for k, n in d[key].get(day, {}).items()}
+                left = {k: n for k, n in left.items() if n > 0}
+                if left:
+                    d[key][day] = left
+                else:
+                    d[key].pop(day, None)
         _capture_save(d)
     return True

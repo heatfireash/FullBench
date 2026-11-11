@@ -330,7 +330,7 @@ class App(tk.Tk):
         elif MAC:
             self.after(200, self._mac_show)
         self._update_info = None       # set when a newer build exists
-        self._update_prompted = None   # version already shown this run
+        self._update_prompted = None   # (version, when) last shown
         self.after(4000, self._check_for_update)
         self.after(1500, self._reparse_if_needed)
         # the sign-in welcome, over the app until one of its two choices
@@ -1512,6 +1512,7 @@ class App(tk.Tk):
 
     # ---- updates
     UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000   # the app is often left open
+    UPDATE_REMIND_S = 24 * 60 * 60           # "Later" asks again a day on
 
     def _check_for_update(self, reschedule=True):
         """Ask the server for the current release, off the UI thread."""
@@ -1540,15 +1541,19 @@ class App(tk.Tk):
 
     def _show_update(self, force=False):
         """
-        The update prompt. Shown once per new version per run unless asked
-        for from the header button, so "Later" means later.
+        The update prompt: when a new version is found, and again a day
+        after "Later" while the app stays open (it's often left running for
+        days, and once a run meant some never saw it again), or any time
+        from the header button.
         """
         info = self._update_info
         if not info:
             return
-        if not force and self._update_prompted == info["latest"]:
+        last = self._update_prompted
+        if not force and last and last[0] == info["latest"] \
+                and time.time() - last[1] < self.UPDATE_REMIND_S:
             return
-        self._update_prompted = info["latest"]
+        self._update_prompted = (info["latest"], time.time())
         if getattr(self, "_update_dlg", None):
             try:
                 self._update_dlg.destroy()
@@ -1844,12 +1849,13 @@ class App(tk.Tk):
         if ok:
             self.refresh(keep=True)          # new names in the table too
 
-    def _count_capture(self, kind):
-        """Count how a game's log was saved (cloud.count_capture), and
-        update the line on the About tab."""
+    def _count_capture(self, kind, info=None):
+        """Count how a game's log was saved (cloud.count_capture), with why
+        it couldn't copy it by itself when it couldn't, and update the line
+        on the About tab."""
         try:
             import cloud
-            cloud.count_capture(kind)
+            cloud.count_capture(kind, info)
         except Exception as e:
             self.log(f"capture count: {e}")
         self._ui(self._capture_line)
@@ -2049,11 +2055,12 @@ class App(tk.Tk):
             else:
                 self.log_cover.show(rect)
 
-        def prompt(state, seconds=None):
+        def prompt(state, seconds=None, info=None):
             if state == "waiting":
                 self._asked = True
             elif state in ("saved", "missed"):
-                self._count_capture("hand" if state == "saved" else "missed")
+                self._count_capture("hand" if state == "saved" else "missed",
+                                    info)
                 if state == "missed":
                     self._asked = False
             if not self.prompt:
