@@ -17,7 +17,7 @@ DONATE_LABEL = "Support Full Bench on Ko-fi"
 DISCORD_URL = "https://discord.gg/9HHgfca4At"
 
 CHANGELOG = [
-    ("1.37.3", "2026-11-11", [
+    ("1.37.3", "2026-11-13", [
         "When a game's log can't be copied by itself, the app now tells "
         "fullbench.gg what went wrong (the copy button wasn't found, the log "
         "wasn't in English, the log closed too soon...) and whether the game "
@@ -25,6 +25,11 @@ CHANGELOG = [
         "Counts only: nothing about you or your games.",
         "If you press Later on an update, the app asks again a day later "
         "instead of not until you restart it.",
+        "New setting on Windows, off unless you turn it on: Minimise to the "
+        "tray. Minimising the window or closing it with the X hides it by "
+        "the clock and Full Bench keeps recording your matches. Click the "
+        "icon to open it again, or right-click it to quit. With Start "
+        "minimised, the app starts there too.",
     ]),
     ("1.37.2", "2026-11-04", [
         "The app syncs when it opens, so a game that didn't upload because "

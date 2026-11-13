@@ -37,7 +37,7 @@ does not install anything. Miss this and the exe builds fine, then asks
 the user to `pip install pyperclip` when they run it.
 
 ```powershell
-py -m pip install pyinstaller pyperclip mss opencv-python-headless numpy pygetwindow pydirectinput pillow
+py -m pip install pyinstaller pyperclip mss opencv-python-headless numpy pygetwindow pydirectinput pillow pystray
 py build.py
 ```
 

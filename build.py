@@ -170,7 +170,8 @@ def main():
         "mss": "mss",                      # screen capture
         "pygetwindow": "pygetwindow",
         "pydirectinput": "pydirectinput",
-        "PIL": "pillow",                   # logo generation
+        "PIL": "pillow",                   # logo generation, tray icon
+        "pystray": "pystray",              # the tray icon (Settings)
         # Mozilla's certificate list, alongside Windows' own (see
         # cloud.tls_context): without it a PC with an out-of-date list
         # can't sign in
@@ -211,12 +212,14 @@ def main():
     for mod in ("ptcgl_tracker", "ptcgl_parse", "autocopy", "ptcgl_stats",
                 "overlay", "settings", "game_watch", "version",
                 "cloud", "archetypes", "cluster", "updater", "evolutions",
-                "app_paths", "look", "welcome"):
+                "app_paths", "look", "welcome", "tray"):
         args += ["--hidden-import", mod]
     # the Mac half of the app has no business in the Windows exe
     args += ["--exclude-module", "mac_platform"]
+    # pystray picks its Windows half at run time, which PyInstaller can't see
     for mod in ("pyperclip", "cv2", "numpy", "mss",
-                "pygetwindow", "pydirectinput", "certifi"):
+                "pygetwindow", "pydirectinput", "certifi",
+                "pystray", "pystray._win32", "PIL.Image"):
         args += ["--hidden-import", mod]
     args += ["--icon", "icon.ico"]
     args.append("ptcgl_gui.py")

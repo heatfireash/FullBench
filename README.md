@@ -47,7 +47,7 @@ exists to help with: don't take my word for it, read the source.
 ## Running from source
 
 ```powershell
-py -m pip install pyperclip mss opencv-python-headless numpy pygetwindow pydirectinput pillow
+py -m pip install pyperclip mss opencv-python-headless numpy pygetwindow pydirectinput pillow pystray
 py ptcgl_gui.py
 ```
 

@@ -32,6 +32,8 @@ DEFAULTS = {
     "auto_track_on_game_launch": True,
     "stop_tracking_on_game_exit": True,
     "start_minimised": False,
+    "minimise_to_tray": False,   # Windows: hide by the clock, keep recording
+    "tray_told": False,          # the "still running" balloon was shown
     "block_continue": True,
     "ignore_no_attack": True,
     "developer_mode": False,

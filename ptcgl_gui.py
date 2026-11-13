@@ -287,6 +287,10 @@ class App(tk.Tk):
 
         if MAC:
             self._mac_menu_bar_app()
+        self._tray = None
+        self._tray_bound = False
+        if not MAC and self.cfg.get("minimise_to_tray"):
+            self._tray_apply()
 
         try:
             # Only the shield over Continue. The full-width banner used to
@@ -325,6 +329,8 @@ class App(tk.Tk):
         if self.cfg.get("start_minimised"):
             if MAC:
                 self.withdraw()        # opened again from the menu bar
+            elif self._tray_shown():
+                self.withdraw()        # opened again from the tray icon
             else:
                 self.iconify()
         elif MAC:
@@ -421,6 +427,102 @@ class App(tk.Tk):
         except Exception:
             pass
         self.destroy()
+
+    # ---- Windows: minimise to the tray (Settings; off unless turned on)
+    def _tray_shown(self):
+        return self._tray is not None and self._tray.shown
+
+    def _tray_apply(self):
+        """Make the window follow the "Minimise to the tray" setting.
+        False if it's on but this build can't show a tray icon."""
+        if MAC:
+            return True
+        if not self.cfg.get("minimise_to_tray"):
+            if self._tray is not None:
+                self._tray.hide()
+            self.protocol("WM_DELETE_WINDOW", self._tray_quit)
+            if self.state() == "withdrawn":
+                self._tray_open()
+            return True
+        if self._tray is None:
+            import tray
+            self._tray = tray.Tray(
+                _asset("icon.ico"), APP_NAME, on_open=self._tray_open,
+                on_quit=self._tray_quit, call=self.ui_q.put, log=self.log)
+        if not self._tray.show():
+            return False
+        self.protocol("WM_DELETE_WINDOW", self._tray_hide)
+        if not self._tray_bound:
+            self.bind("<Unmap>", self._tray_minimised, add="+")
+            self._tray_bound = True
+        return True
+
+    def _tray_minimised(self, event):
+        """The minimise button: go to the tray instead of the taskbar."""
+        if event.widget is not self or not self._tray_shown():
+            return
+        try:
+            if self.state() == "iconic":
+                self.after(0, self._tray_hide)
+        except Exception:
+            pass
+
+    def _tray_hide(self):
+        """Hide the window; Full Bench keeps recording. The first time,
+        say where it went."""
+        if not self._tray_shown():
+            self.iconify()
+            return
+        self.withdraw()
+        if not self.cfg.get("tray_told"):
+            self.cfg["tray_told"] = True
+            try:
+                self.settings_mod.save(self.cfg)
+            except Exception:
+                pass
+            self._tray.tell(
+                "Full Bench is still running and keeps recording your "
+                "matches. Click this icon to open it again, or right-click "
+                "it to quit.")
+
+    def _tray_open(self):
+        try:
+            self.deiconify()
+            self.state("normal")
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
+
+    def _tray_quit(self):
+        try:
+            if self.stop_evt:
+                self.stop_evt.set()
+        except Exception:
+            pass
+        try:
+            if self._tray is not None:
+                self._tray.hide()
+        except Exception:
+            pass
+        self.destroy()
+
+    def destroy(self):
+        # however the app closes (Quit, an update restarting it), the tray
+        # icon goes first: left behind, its thread would keep the app alive
+        try:
+            if getattr(self, "_tray", None) is not None:
+                self._tray.hide()
+        except Exception:
+            pass
+        super().destroy()
+
+    def _hidden(self):
+        """Minimised, or away in the tray: not on screen either way."""
+        try:
+            return self.state() in ("iconic", "withdrawn")
+        except Exception:
+            return False
 
     def _native_icon(self, win=None):
         """
@@ -932,6 +1034,14 @@ class App(tk.Tk):
              "Releases the screen watcher when you're done playing."),
             ("start_minimised", "Start minimised",
              "Useful together with the option above."),
+        ] + ([] if MAC else [
+            ("minimise_to_tray", "Minimise to the tray",
+             "Minimising the window, or closing it with the X, hides it "
+             "by the clock instead and Full Bench keeps recording your "
+             "matches. Click the icon there to open it again, or "
+             "right-click it and choose Quit to close it. With Start "
+             "minimised it starts there too."),
+        ]) + [
             ("block_continue",
              "Block the Continue button while the log is being saved",
              "Puts a small cover over the Continue button while the log "
@@ -1057,6 +1167,20 @@ class App(tk.Tk):
                 self.set_vars[key].set(not val)
                 self.cfg[key] = not val
                 self.settings_mod.save(self.cfg)
+        elif key == "minimise_to_tray":
+            if self._tray_apply():
+                self.set_note.configure(
+                    text="saved. Minimising or closing the window now "
+                         "hides it by the clock" if val else "saved",
+                    fg=MUTED)
+            else:
+                self.set_vars[key].set(False)
+                self.cfg[key] = False
+                self.settings_mod.save(self.cfg)
+                self._tray_apply()
+                self.set_note.configure(
+                    text="The tray icon couldn't be shown on this "
+                         "computer, so this stays off.", fg=RED)
         elif key == "developer_mode":
             self._apply_dev_mode()
             self._header_state()
@@ -1568,7 +1692,7 @@ class App(tk.Tk):
         dlg.resizable(False, False)
         # A transient window hides along with a minimised parent, and the
         # app is often minimised -- the prompt would never be seen.
-        if self.state() != "iconic":
+        if not self._hidden():
             dlg.transient(self)
 
         head = tk.Frame(dlg, bg=HEADER)
@@ -1701,7 +1825,7 @@ class App(tk.Tk):
         dlg.bind("<Escape>", lambda e: later())
         dlg.bind("<Return>", lambda e: update_now() if can else open_page())
         dlg.protocol("WM_DELETE_WINDOW", later)
-        if self.state() != "iconic":
+        if not self._hidden():
             dlg.geometry(f"+{self.winfo_rootx()+120}+{self.winfo_rooty()+80}")
         dlg.lift()
         dlg.focus_force()
