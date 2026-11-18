@@ -276,6 +276,28 @@ class App(tk.Tk):
             self.cfg["opened_pending"] = True
             settings_mod.save(self.cfg)
 
+        # A new install on Windows starts with Windows, minimised by the
+        # clock, so the app is already running when a game is played: a
+        # player who forgets to open it has nothing saved, and that looks
+        # like them giving up on Full Bench. Only on a computer that's
+        # never had the app (people who have it keep their settings), only
+        # the installed app (not run from source), and not this first time
+        # it opens, which shows the window as always. All three are in
+        # Settings to turn off.
+        self._just_set_startup = False
+        if (FIRST_RUN and not MAC and getattr(sys, "frozen", False)
+                and not self.cfg.get("startup_default_done")):
+            self.cfg["startup_default_done"] = True
+            try:
+                ok, _msg = settings_mod.set_startup(True)
+            except Exception:
+                ok = False
+            if ok:
+                self.cfg.update(start_with_windows=True, start_minimised=True,
+                                minimise_to_tray=True)
+                self._just_set_startup = True
+            settings_mod.save(self.cfg)
+
         # the exe the last update replaced, if this is its first start
         try:
             import updater
@@ -326,7 +348,13 @@ class App(tk.Tk):
         self.after(300, self._drain_log)
         self.after(50, self._pump_ui)
         self._start_game_watch()
-        if self.cfg.get("start_minimised"):
+        if self._just_set_startup:
+            self.after(1500, lambda: self.log(
+                "Full Bench now starts when Windows does and waits by the "
+                "clock, so every game is saved without opening it. Turn "
+                "this off in Settings: Start with Windows, Start minimised "
+                "and Minimise to the tray."))
+        elif self.cfg.get("start_minimised"):
             if MAC:
                 self.withdraw()        # opened again from the menu bar
             elif self._tray_shown():

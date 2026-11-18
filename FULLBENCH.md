@@ -172,7 +172,11 @@ In the **Settings** tab:
 - **Start Full Bench when Windows starts** — writes a per-user entry
   under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No
   admin rights, only your account, and you can also switch it off from
-  Task Manager's Startup tab. Nothing is written unless you tick it.
+  Task Manager's Startup tab. On a computer that's never had Full Bench
+  this is on from the start, together with Start minimised and Minimise
+  to the tray, so games are saved without opening the app; the first
+  time it opens it shows the window as usual. Untick any of them to
+  turn it off. An existing install keeps the settings it has.
 - **Start tracking automatically when PTCGL launches** — on by default.
   The app watches for the game window, falling back to the process list
   so a minimised game still counts, and begins tracking on its own.
