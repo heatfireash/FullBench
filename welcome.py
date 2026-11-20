@@ -33,6 +33,7 @@ MUTED = "#6a6558"
 ACCENT = "#f5c518"
 ACCENT_HI = "#ffd43b"
 ACCENT_DK = "#d9ab0f"
+BLUE = "#1d5fd1"          # the app's blue, as for wins
 SCRIM = "#2f3340"
 SCRIM_ALPHA = 0.62
 
@@ -244,13 +245,18 @@ class SignInGate:
                  wraplength=px(640)).pack()
         if self.games:
             # what they'd keep: the games already played with the app
+            # the number in bold blue, so it's the thing that's read
             n = self.games
-            tk.Label(top, text=f"You have {n} game{'s' if n != 1 else ''} "
-                               "saved on this computer. Make an account and "
-                               f"{'they come' if n != 1 else 'it comes'} "
-                               "with you.",
-                     bg=SURFACE, fg=TEXT, font=semi(11), justify="center",
-                     wraplength=px(640)).pack(pady=(px(8), 0))
+            line = tk.Frame(top, bg=SURFACE)
+            line.pack(pady=(px(8), 0))
+            for text, colour, font in (
+                    ("You have ", TEXT, semi(11)),
+                    (f"{n} game{'s' if n != 1 else ''}", BLUE, ui(11, "bold")),
+                    (" saved on this computer. Make an account and "
+                     f"{'they come' if n != 1 else 'it comes'} with you.",
+                     TEXT, semi(11))):
+                tk.Label(line, text=text, bg=SURFACE, fg=colour, font=font,
+                         padx=0, bd=0).pack(side="left")
 
         # the one button that matters: big and yellow, flat like the
         # site's Download button. The second line says it can be Google

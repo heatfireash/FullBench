@@ -784,9 +784,14 @@ class App(tk.Tk):
         self.nudge = tk.Frame(self, bg="#fff6d6",
                               highlightbackground="#efd98a",
                               highlightthickness=1)
-        self.nudge_text = tk.Label(self.nudge, text="", bg="#fff6d6",
-                                   fg=TEXT, font=ui(10), anchor="w",
-                                   justify="left")
+        # a Text rather than a Label, so the game count can be bold blue
+        # while the sentence still wraps in a narrow window
+        self.nudge_text = tk.Text(self.nudge, bg="#fff6d6", fg=TEXT,
+                                  font=ui(10), wrap="word", height=1,
+                                  bd=0, highlightthickness=0, cursor="arrow",
+                                  takefocus=0)
+        self.nudge_text.tag_configure("n", foreground=WIN,
+                                      font=ui(10, "bold"))
         ttk.Button(self.nudge, text="Create a free account",
                    style="Gold.TButton",
                    command=lambda: self._cloud_browser_login(new=True)
@@ -795,9 +800,7 @@ class App(tk.Tk):
         # window is narrow, never the buttons that get cut
         self.nudge_text.pack(side="left", fill="x", expand=True,
                              padx=(12, 10), pady=8)
-        self.nudge_text.bind(
-            "<Configure>", lambda e: self.nudge_text.configure(
-                wraplength=max(200, e.width - 4)))
+        self.nudge_text.bind("<Configure>", lambda e: self._nudge_fit())
 
         nb = ttk.Notebook(self)
         self.nb = nb
@@ -1408,17 +1411,37 @@ class App(tk.Tk):
             return
         n = self._local_games()
         if n:
-            text = (f"Your {n} game{'s are' if n != 1 else ' is'} saved only "
-                    f"on this {DEVICE}. Make a free account to keep "
-                    f"{'them' if n != 1 else 'it'}, watch replays and see your "
-                    "stats on any computer or your phone.")
+            parts = [("Your ", ""),
+                     (f"{n} game{'s' if n != 1 else ''}", "n"),
+                     (f" {'are' if n != 1 else 'is'} saved only on this "
+                      f"{DEVICE}. Make a free account to keep "
+                      f"{'them' if n != 1 else 'it'}, watch replays and see "
+                      "your stats on any computer or your phone.", "")]
         else:
-            text = ("Make a free account and every game you play is saved "
-                    "to it: replays, stats and your history on any computer "
-                    "or your phone.")
-        self.nudge_text.configure(text=text)
+            parts = [("Make a free account and every game you play is saved "
+                      "to it: replays, stats and your history on any computer "
+                      "or your phone.", "")]
+        t = self.nudge_text
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        for text, tag in parts:
+            t.insert("end", text, tag)
+        t.configure(state="disabled")
         if not nudge.winfo_ismapped():
             nudge.pack(fill="x", padx=16, pady=(10, 0), before=self.nb)
+        self._nudge_fit()
+
+    def _nudge_fit(self):
+        """As many lines as the strip's sentence wraps to."""
+        t = self.nudge_text
+        try:
+            t.update_idletasks()
+            lines = t.count("1.0", "end", "displaylines")
+            lines = lines[0] if isinstance(lines, tuple) else lines
+            if lines and int(t.cget("height")) != lines:
+                t.configure(height=lines)
+        except tk.TclError:
+            pass
 
     def _apply_dev_mode(self):
         """
