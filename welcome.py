@@ -63,8 +63,9 @@ class SignInGate:
     on_signin() starts the sign-in; on_skip() is "continue without".
     """
 
-    def __init__(self, root, asset, on_signin, on_skip):
+    def __init__(self, root, asset, on_signin, on_skip, games=0):
         self.root = root
+        self.games = games       # games saved on this computer so far
         self.asset = asset
         self.on_signin = on_signin
         self.on_skip = on_skip
@@ -236,20 +237,39 @@ class SignInGate:
                            "from any computer or your phone.",
                  bg=SURFACE, fg=MUTED, font=ui(11), justify="center",
                  wraplength=px(640)).pack()
+        if self.games:
+            # what they'd keep: the games already played with the app
+            n = self.games
+            tk.Label(top, text=f"You have {n} game{'s' if n != 1 else ''} "
+                               "saved on this computer. Make an account and "
+                               f"{'they come' if n != 1 else 'it comes'} "
+                               "with you.",
+                     bg=SURFACE, fg=TEXT, font=semi(11), justify="center",
+                     wraplength=px(640)).pack(pady=(px(8), 0))
 
         # the one button that matters: big and yellow, flat like the
-        # site's Download button
-        lip = tk.Frame(top, bg=ACCENT, width=px(420), height=px(54))
+        # site's Download button. The second line says it can be Google
+        # or Discord: one click, no password to think up
+        lip = tk.Frame(top, bg=ACCENT, width=px(420), height=px(64))
         lip.pack_propagate(False)
-        lip.pack(pady=(px(16), 0))
-        btn = tk.Label(lip, text="Create a free account", bg=ACCENT,
+        lip.pack(pady=(px(14), 0))
+        inner = tk.Frame(lip, bg=ACCENT, cursor="hand2")
+        inner.place(relx=0.5, rely=0.5, anchor="center")
+        btn = tk.Label(inner, text="Create a free account", bg=ACCENT,
                        fg=TEXT, font=semi(16), cursor="hand2")
-        btn.pack(fill="both", expand=True)
-        btn.bind("<Button-1>", lambda e: self._signin(new=True))
-        btn.bind("<Enter>", lambda e: (btn.configure(bg=ACCENT_DK),
-                                       lip.configure(bg=ACCENT_DK)))
-        btn.bind("<Leave>", lambda e: (btn.configure(bg=ACCENT),
-                                       lip.configure(bg=ACCENT)))
+        btn.pack()
+        how = tk.Label(inner, text="with Google, Discord or your email",
+                       bg=ACCENT, fg=TEXT, font=ui(9), cursor="hand2")
+        how.pack()
+        parts = (lip, inner, btn, how)
+
+        def tint(colour):
+            for w in parts:
+                w.configure(bg=colour)
+        for w in parts:
+            w.bind("<Button-1>", lambda e: self._signin(new=True))
+            w.bind("<Enter>", lambda e: tint(ACCENT_DK))
+            w.bind("<Leave>", lambda e: tint(ACCENT))
 
         # the other two choices, side by side under the button
         row = tk.Frame(top, bg=SURFACE)

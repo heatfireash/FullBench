@@ -374,6 +374,9 @@ class App(tk.Tk):
         # catch up on anything a failed sync left behind: closing and
         # opening the app is the first thing most people try
         self.after(SYNC_AT_START_MS, self._sync_at_start)
+        # "running today, signed in or not": once a day, checked hourly
+        # since the app can stay open in the tray for days
+        self.after(SYNC_AT_START_MS + 3000, self._report_alive)
 
     # ------------------------------------------------------------ Mac
 
@@ -775,6 +778,27 @@ class App(tk.Tk):
                                      command=lambda: self._show_update(
                                          force=True))
 
+        # Not signed in: a strip under the header saying the games so far
+        # are only on this computer, with the way to an account. Shown and
+        # filled in by _nudge_state.
+        self.nudge = tk.Frame(self, bg="#fff6d6",
+                              highlightbackground="#efd98a",
+                              highlightthickness=1)
+        self.nudge_text = tk.Label(self.nudge, text="", bg="#fff6d6",
+                                   fg=TEXT, font=ui(10), anchor="w",
+                                   justify="left")
+        ttk.Button(self.nudge, text="Create a free account",
+                   style="Gold.TButton",
+                   command=lambda: self._cloud_browser_login(new=True)
+                   ).pack(side="right", padx=(0, 12), pady=6)
+        # packed after the buttons, so it's the text that wraps when the
+        # window is narrow, never the buttons that get cut
+        self.nudge_text.pack(side="left", fill="x", expand=True,
+                             padx=(12, 10), pady=8)
+        self.nudge_text.bind(
+            "<Configure>", lambda e: self.nudge_text.configure(
+                wraplength=max(200, e.width - 4)))
+
         nb = ttk.Notebook(self)
         self.nb = nb
         nb.pack(fill="both", expand=True, padx=16, pady=(10, 16))
@@ -901,19 +925,23 @@ class App(tk.Tk):
         self.tree.tag_configure("win", foreground=WIN)
         self.tree.tag_configure("loss", foreground=LOSS)
         self.tree.tag_configure("ignored", foreground=MUTED)
-        self.tree.pack(fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self._show_detail)
         self.tree.bind("<Double-1>", lambda e: self._view_log())
 
-        btns = tk.Frame(left, bg=SURFACE)
-        btns.pack(fill="x", pady=(6, 0))
-        ttk.Button(btns, text="View battle log", style="Go.TButton",
-                   command=self._view_log).pack(side="left", padx=(0, 8))
-        tk.Label(btns, text="or double-click a match",
-                 bg=SURFACE, fg=MUTED, font=ui(9)).pack(side="left")
+        # the buttons and the note under them are packed from the bottom
+        # first, so a short window shrinks the list rather than hiding them
         self._toast_lbl = tk.Label(left, text="", bg=SURFACE, fg=MUTED,
                                    font=ui(9), anchor="w")
-        self._toast_lbl.pack(fill="x", pady=(4, 0))
+        self._toast_lbl.pack(side="bottom", fill="x", pady=(4, 0))
+        btns = tk.Frame(left, bg=SURFACE)
+        btns.pack(side="bottom", fill="x", pady=(6, 0))
+        self.tree.pack(fill="both", expand=True)
+        ttk.Button(btns, text="Watch replay", style="Go.TButton",
+                   command=self._watch_replay).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="View battle log",
+                   command=self._view_log).pack(side="left", padx=(0, 8))
+        tk.Label(btns, text="or double-click a match for its log",
+                 bg=SURFACE, fg=MUTED, font=ui(9)).pack(side="left")
         pane.add(left, stretch="always")
 
         right = tk.Frame(pane, bg=SURFACE, width=380)
@@ -1350,6 +1378,7 @@ class App(tk.Tk):
             self.btn_cloud_sync.pack(side="left")
         else:
             self.btn_account.pack(side="left")
+        self._nudge_state()
 
         self.btn.pack_forget()
         self.btn_refresh.pack_forget()
@@ -1358,6 +1387,38 @@ class App(tk.Tk):
             self.btn.pack(side="right")
         elif not self.stop_evt:
             self.btn.pack(side="right", padx=(0, 10))
+
+    def _local_games(self):
+        """Games this computer has saved (ignored ones aside)."""
+        try:
+            rows = q("SELECT COUNT(*) AS n FROM matches WHERE "
+                     "COALESCE(excluded,'') = ''")
+            return rows[0]["n"] if rows else 0
+        except Exception:
+            return 0
+
+    def _nudge_state(self):
+        """The strip under the header: only while nobody is signed in,
+        saying how many games are on this computer and nowhere else."""
+        nudge = getattr(self, "nudge", None)
+        if nudge is None:
+            return
+        if self.cfg.get("cloud_token"):
+            nudge.pack_forget()
+            return
+        n = self._local_games()
+        if n:
+            text = (f"Your {n} game{'s are' if n != 1 else ' is'} saved only "
+                    f"on this {DEVICE}. Make a free account to keep "
+                    f"{'them' if n != 1 else 'it'}, watch replays and see your "
+                    "stats on any computer or your phone.")
+        else:
+            text = ("Make a free account and every game you play is saved "
+                    "to it: replays, stats and your history on any computer "
+                    "or your phone.")
+        self.nudge_text.configure(text=text)
+        if not nudge.winfo_ismapped():
+            nudge.pack(fill="x", padx=16, pady=(10, 0), before=self.nb)
 
     def _apply_dev_mode(self):
         """
@@ -1447,9 +1508,10 @@ class App(tk.Tk):
         except Exception:
             pass
         if new:
-            note = ("Finish in your browser: make your account, open the "
-                    "email we send and press Confirm, then press Connect it. "
-                    f"Full Bench signs in by itself. Code: {info['user_code']}")
+            note = ("Finish in your browser: sign up with Google or Discord, "
+                    "or with your email (then open the email we send and "
+                    "press Confirm). Then press Connect it, and Full Bench "
+                    f"signs in by itself. Code: {info['user_code']}")
         else:
             note = (f"approve this computer in your browser. "
                     f"Code: {info['user_code']}")
@@ -1501,7 +1563,8 @@ class App(tk.Tk):
             from welcome import SignInGate
             self._gate = SignInGate(self, _asset,
                                     on_signin=self._cloud_browser_login,
-                                    on_skip=self._gate_skip)
+                                    on_skip=self._gate_skip,
+                                    games=self._local_games())
             self._gate.show()
             self.after(800, self._gate_watch)
         except Exception:
@@ -1562,6 +1625,28 @@ class App(tk.Tk):
             self._report_opened()
         if self.cfg.get("cloud_token") and self.cfg.get("cloud_auto_sync", True):
             self._cloud_sync(quiet=True)
+
+    ALIVE_CHECK_MS = 60 * 60 * 1000
+
+    def _report_alive(self):
+        """Once a UTC day: this copy is running, signed in or not
+        (cloud.report_alive). Tried again an hour later if it didn't go."""
+        import cloud
+        from datetime import datetime, timezone
+        self.after(self.ALIVE_CHECK_MS, self._report_alive)
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self.cfg.get("alive_day") == day:
+            return
+        signed_in = bool(self.cfg.get("cloud_token"))
+
+        def run():
+            if cloud.report_alive(self._server(), signed_in):
+                self.after(0, done)
+
+        def done():
+            self.cfg["alive_day"] = day
+            self.settings_mod.save(self.cfg)
+        threading.Thread(target=run, daemon=True).start()
 
     def _report_opened(self):
         """The one "opened for the first time" count (cloud.report_opened),
@@ -1953,7 +2038,9 @@ class App(tk.Tk):
                     self.toast.show(new["result"],
                                     new["opponent_archetype"],
                                     new["turns"],
-                                    sync="syncing" if syncing else "local")
+                                    sync="syncing" if syncing else
+                                    ("local" if self.cfg.get("cloud_token")
+                                     else "signed_out"))
                 except Exception as e:
                     self.log(f"pop-up failed: {e}")
             if syncing:
@@ -2274,6 +2361,7 @@ class App(tk.Tk):
             note += (f"   \u00b7 {ignored} ignored "
                      f"(no attacks made)")
         self.filter_note.configure(text=note)
+        self._nudge_state()
 
         self.card_widgets["record"][0].configure(text=f"{d['w']}-{d['l']}")
         self.card_widgets["record"][1].configure(text=f"{d['n']} recorded")
@@ -2428,6 +2516,39 @@ class App(tk.Tk):
             self.after(0, done)
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _watch_replay(self):
+        """
+        The selected match's replay on fullbench.gg. Replays are built
+        from the game in your account, so this needs one: signed out, the
+        sign-in welcome comes up again and says so.
+        """
+        sel = self.tree.selection()
+        if not sel:
+            self._toast("Select a match first.")
+            return
+        rows = q("SELECT log_hash FROM matches WHERE id=?", (int(sel[0]),))
+        if not rows or not rows[0]["log_hash"]:
+            return
+        if not self.cfg.get("cloud_token"):
+            self._gate_done = False
+            self._maybe_gate()
+            n = self._local_games()
+            msg = ("Replays are part of a free account. Make one and "
+                   + ("this game and the rest come with you." if n > 1
+                      else "this game comes with you."))
+            gate = getattr(self, "_gate", None)
+            if gate is not None and gate.is_open:
+                gate.set_status(msg, TEXT)
+            else:
+                self._toast(msg)
+            return
+        import webbrowser
+        url = f"{self._server().rstrip('/')}/replay/log/{rows[0]['log_hash']}"
+        try:
+            webbrowser.open(url)
+        except Exception:
+            self._toast(f"Couldn't open your browser. The replay is at {url}")
 
     def _toast(self, msg):
         """One-line note under the match list; the log gets it too."""

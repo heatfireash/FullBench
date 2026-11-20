@@ -720,6 +720,26 @@ def capture_totals():
     return out
 
 
+def report_alive(base_url, signed_in):
+    """Tell fullbench.gg this copy of the app is running today: one count
+    a day, and only whether it's signed in -- nothing about the person or
+    the computer. A signed-out copy never talks to the site otherwise, so
+    without it nobody could tell how many are used without an account.
+    True once the server has it."""
+    try:
+        h = _headers(None)
+        h["X-FullBench-Signed-In"] = "1" if signed_in else "0"
+        req = urllib.request.Request(
+            normalise_url(base_url).rstrip("/") + "/v1/alive", data=b"{}",
+            method="POST", headers=h)
+        with urllib.request.urlopen(req, timeout=TIMEOUT,
+                                    context=tls_context()) as r:
+            r.read()
+        return True
+    except Exception:
+        return False
+
+
 def report_opened(base_url):
     """Tell fullbench.gg the app was opened on a new computer for the first
     time: one count, so the admins can see how many downloads get as far

@@ -17,13 +17,24 @@ DONATE_LABEL = "Support Full Bench on Ko-fi"
 DISCORD_URL = "https://discord.gg/9HHgfca4At"
 
 CHANGELOG = [
-    ("1.37.4", "2026-11-18", [
+    ("1.37.4", "2026-11-19", [
         "On a computer that's never had Full Bench, the app now starts when "
         "Windows does and waits by the clock, so every game is saved without "
         "having to remember to open it. The first time you open it, it opens "
         "as usual. Start with Windows, Start minimised and Minimise to the "
         "tray can each be turned off in Settings. If you already have Full "
         "Bench, nothing changes.",
+        "New Watch replay button on the Matches tab: it opens the selected "
+        "game's replay on fullbench.gg.",
+        "Not signed in? A note under the header now says how many of your "
+        "games are saved only on this computer, and the match pop-up says "
+        "\"Only on this PC\". Make a free account, with Google, Discord or "
+        "your email, and they all go to it.",
+        "Once a day the app tells fullbench.gg it's running and whether it's "
+        "signed in. Nothing else is sent: no name, no games, nothing about "
+        "the computer.",
+        "The Matches tab's buttons no longer drop out of sight when the "
+        "window is short.",
     ]),
     ("1.37.3", "2026-11-13", [
         "When a game's log can't be copied by itself, the app now tells "

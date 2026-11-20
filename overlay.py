@@ -353,7 +353,10 @@ class MatchToast:
         "saving": ("Saved", MUTED),
         "syncing": ("Syncing…", MUTED),
         "synced": ("Synced", WIN),
-        "local": ("Saved", MUTED),            # not signed in / auto-sync off
+        "local": ("Saved", MUTED),            # auto-sync off
+        # not signed in: there's no account for it to go to
+        "signed_out": ("Only on this " + ("Mac" if sys.platform == "darwin"
+                                             else "PC"), LOSS),
         "failed": ("Not synced", LOSS),
     }
     _RESULT = {"win": ("Win", WIN), "loss": ("Loss", LOSS)}
