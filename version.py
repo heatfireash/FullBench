@@ -35,6 +35,10 @@ CHANGELOG = [
         "the computer.",
         "The Matches tab's buttons no longer drop out of sight when the "
         "window is short.",
+        "When a game can't be copied because the log's copy button wasn't "
+        "found, the app now also says whether something close to it was on "
+        "screen. About 1 game in 20 is missed this way, and this shows "
+        "which fix it needs.",
     ]),
     ("1.37.3", "2026-11-13", [
         "When a game's log can't be copied by itself, the app now tells "

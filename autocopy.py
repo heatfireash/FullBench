@@ -203,6 +203,10 @@ FAST_PATH_THRESHOLD = 0.90   # good enough to skip the full sweep
 # region of the panel where it actually appears -- both cut the chance
 # of clicking something unrelated.
 COPY_MATCH_THRESHOLD = 0.88
+# Below the threshold but this close: something like the copy button was
+# on screen, just not close enough to click. Counted apart ("no-icon-near")
+# from a log that never looked open at all.
+NEAR_MISS_SCORE = 0.60
 COPY_REGION = (0.50, 0.00, 1.00, 0.45)   # x0, y0, x1, y1 as fractions
 
 
@@ -610,6 +614,7 @@ def _is_new_log(cur, before):
 
 # Why the last copy didn't work, for the counts the app sends (cloud.
 # count_capture): "no-icon" (the battle log's copy button was never seen),
+# "no-icon-near" (something close to it was, but not close enough),
 # "not-copied" (it was pressed, but no log reached the clipboard),
 # "not-english" (something was copied, but not a log the app can read:
 # usually the game in another language), "closed" (the log closed before
@@ -747,8 +752,13 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
         else:
             pydirectinput.keyDown("ctrl"); pydirectinput.press("a"); pydirectinput.keyUp("ctrl")
             pydirectinput.keyDown("ctrl"); pydirectinput.press("c"); pydirectinput.keyUp("ctrl")
+    # never clicked: was something close to the copy button there (the
+    # picture matching is a little off for this screen), or did the log
+    # never look open at all? The counts keep the two apart.
+    seen_why = ("no-icon-near" if copy_template is not None
+                and best >= NEAR_MISS_SCORE else "no-icon")
     if not clicked and btn_xy is None:
-        last_why = "no-icon"
+        last_why = seen_why
         return False, None
 
     # confirm: wait for the clipboard to actually change to a log
@@ -779,7 +789,7 @@ def do_copy(win, btn_xy, copy_template=None, expected_scale=None,
         time.sleep(0.06)
 
     if not isinstance(clicked, tuple):
-        last_why = "no-icon"
+        last_why = seen_why
     else:
         # something new on the clipboard that isn't a log: most likely the
         # game's log in another language

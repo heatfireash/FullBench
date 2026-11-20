@@ -686,7 +686,8 @@ def _capture_save(d):
         pass
 
 
-WHY_CODES = ("no-icon", "not-copied", "not-english", "closed", "gone", "other")
+WHY_CODES = ("no-icon", "no-icon-near", "not-copied", "not-english",
+             "closed", "gone", "other")
 
 
 def count_capture(kind, info=None):
