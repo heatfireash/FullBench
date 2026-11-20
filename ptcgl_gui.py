@@ -861,7 +861,7 @@ class App(tk.Tk):
         mid = tk.Frame(self.tab_dash, bg=SURFACE)
         mid.pack(fill="both", expand=True, pady=6)
 
-        tk.Label(mid, text="Recent form", bg=SURFACE, fg=TEXT,
+        tk.Label(mid, text="Recent wins/losses", bg=SURFACE, fg=TEXT,
                  font=semi(12)).pack(anchor="w", padx=6)
         self.form = tk.Frame(mid, bg=SURFACE)
         self.form.pack(anchor="w", padx=6, pady=(4, 14))
