@@ -196,14 +196,15 @@ class SignInGate:
 
         cw = min(int(CARD_W * s), w - int(60 * s))
         room = h - int(24 * s)
-        # try with the pictures; without them if the window is short
-        for compact in (False, True):
+        # with the pictures; smaller pictures if the window is short; none
+        # if it's shorter still
+        for compact in (0, 1, 2):
             if self._built_for != (cw, compact, s):
                 self._fill(cw, compact, s)
                 self._built_for = (cw, compact, s)
             self.card.update_idletasks()
             ch = self.card.winfo_reqheight()
-            if ch <= room or compact:
+            if ch <= room or compact == 2:
                 break
         ch = min(ch, room)
         where = (f"{cw}x{ch}+{x + (w - cw) // 2}"
@@ -217,6 +218,10 @@ class SignInGate:
 
     # ----------------------------------------------------------- the card
     def _fill(self, cw, compact, s):
+        """compact: 0 as designed, 1 with smaller pictures, 2 with none
+        (and a smaller heading) for a short window."""
+        pics = (1.0, 0.72, 0)[compact]
+        compact = compact == 2
         for child in self.card.winfo_children():
             child.destroy()
         px = lambda v: int(round(v * s))          # noqa: E731
@@ -306,15 +311,15 @@ class SignInGate:
         grid.pack(fill="x", padx=px(SIDE))
         gap = px(14)
         tile_w = (cw - 2 - 2 * px(SIDE) - gap) // 2
-        img_w = 0 if compact else px(IMG_W)
+        img_w = px(IMG_W * pics)
         for i, (pic, title, body) in enumerate(TILES):
             tile = tk.Frame(grid, bg=SOFT, highlightbackground=LINE,
                             highlightthickness=1, width=tile_w)
             tile.grid(row=i // 2, column=i % 2, sticky="nsew",
                       padx=(0, gap) if i % 2 == 0 else 0,
                       pady=(0, px(10)))
-            if not compact:
-                im = self._image(pic, px(IMG_W), px(IMG_H))
+            if pics:
+                im = self._image(pic, px(IMG_W * pics), px(IMG_H * pics))
                 if im:
                     tk.Label(tile, image=im, bg=SURFACE, bd=0).pack(
                         side="left", fill="y")
