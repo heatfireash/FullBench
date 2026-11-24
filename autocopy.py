@@ -154,13 +154,14 @@ class GameView:
     in for the window everywhere else in this file (grabs, clicks, the
     fractions the buttons are looked for at).
 
-    The game always draws 16:9. Full screen on a screen of another shape
-    (3:2 laptops, 16:10, ultrawide), it fills the rest with black bars, and
-    every fraction of the whole window then lands in the wrong place: the
-    gold Continue strip ends up half in the bottom bar and the result
-    screen is never seen. So when the window isn't 16:9 and the strips
-    where bars would be are black, the 16:9 middle is used instead.
-    Anything else -- activate(), the title -- goes to the real window.
+    Full screen, the game draws at the size picked in its own settings and
+    puts black bars round it where the screen is bigger: 1600x900 on a
+    1280x1024 screen draws 1280x900 with bars above and below. Every
+    fraction of the whole window then lands in the wrong place: the gold
+    Continue strip ends up partly in the bottom bar and the result screen
+    is never seen. So the bars are measured off the picture and the part
+    inside them is used instead. Anything else -- activate(), the title --
+    goes to the real window.
     """
 
     def __init__(self, window, area):
@@ -171,63 +172,100 @@ class GameView:
         return getattr(self.window, name)
 
 
-BAR_RECHECK_S = 3.0      # how often bars are looked for again
+BAR_RECHECK_S = 3.0      # how often bars are measured again
 BAR_DARK = 16            # brightest a bar pixel can be
-BAR_DARK_SHARE = 0.98    # share of a bar's pixels that must be that dark
-_bars = {"rect": None, "area": None, "at": 0.0}
+BAR_MIN = 0.02           # thinnest bar, as a share of the window
+BAR_SAME = 0.03          # how far apart the two bars of a pair can be
+_bars = {"rect": None, "bars": None, "seen": None, "at": 0.0}
 
 
-def _grab_box(left, top, width, height):
-    with mss.mss() as sct:
-        img = np.array(sct.grab({"left": int(left), "top": int(top),
-                                 "width": max(1, int(width)),
-                                 "height": max(1, int(height))}))
-    return img[:, :, :3]
+def _pair(dark, n):
+    """Thickness of a matching pair of bars at both ends of a row of
+    True/False (dark lines), or 0. The thinner of the two: the game's own
+    dark edge (its menu bar is near black) can make one look thicker."""
+    if dark.all():
+        return 0
+    a = int(np.argmin(dark))
+    b = int(np.argmin(dark[::-1]))
+    if min(a, b) < n * BAR_MIN or abs(a - b) > n * BAR_SAME:
+        return 0
+    return min(a, b)
 
 
-def _bars_area(left, top, w, h, grab_box=_grab_box):
-    """(left, top, width, height) of the 16:9 middle if the window around
-    it is black bars, else None."""
-    if w <= 0 or h <= 0 or abs(w / h - 16 / 9) < 0.03:
+def measure_bars(frame):
+    """(top/bottom, left/right) bar thickness in pixels of a picture of
+    the window, or None when it has none. Only lines dark all the way
+    across count, and only in pairs of the same thickness."""
+    if frame is None or frame.size == 0:
         return None
-    if w / h > 16 / 9:                      # wider: bars left and right
-        gw, gh = round(h * 16 / 9), h
-    else:                                   # taller: bars top and bottom
-        gw, gh = w, round(w * 9 / 16)
-    gx, gy = (w - gw) // 2, (h - gh) // 2
-    if max(gx / w, gy / h) < 0.02:
-        return None
-    if gy:
-        strips = [(left, top, w, gy), (left, top + gy + gh, w, h - gy - gh)]
-    else:
-        strips = [(left, top, gx, h), (left + gx + gw, top, w - gx - gw, h)]
-    for s in strips:
-        try:
-            img = grab_box(*s)
-        except Exception:
-            return None
-        if img.size == 0 or (img.max(axis=2) < BAR_DARK).mean() < BAR_DARK_SHARE:
-            return None
-    return left + gx, top + gy, gw, gh
+    lit = frame.max(axis=2) >= BAR_DARK
+    v = _pair(~lit.any(axis=1), frame.shape[0])
+    if v:
+        lit = lit[v:-v]                     # side bars: the middle rows only
+    h = _pair(~lit.any(axis=0), frame.shape[1])
+    return (v, h) if v or h else None
 
 
-def game_view(win, now=None):
-    """The window, or on Windows a GameView of the 16:9 part of it when
-    the game has black bars round it. Looked for again every few seconds,
-    and straight away when the window moves or changes size."""
+def _bars_still(frame, bars):
+    """Are the bars measured before still black in this picture?"""
+    v, h = bars
+    fh, fw = frame.shape[:2]
+    if 2 * v >= fh or 2 * h >= fw:
+        return False
+    parts = []
+    if v:
+        parts += [frame[:v], frame[fh - v:]]
+    if h:
+        parts += [frame[:, :h], frame[:, fw - h:]]
+    return all(p.size and p.max() < BAR_DARK for p in parts)
+
+
+def game_view(win, now=None, frame=None):
+    """
+    The window, or on Windows a GameView of the part inside the black bars
+    when the game has them. Measured every few seconds. A new measurement
+    is only taken up once it has come out the same twice running, so one
+    odd picture (a fade to black, a dark screen with something in the
+    middle) can't move everything. Bars already in use stay as long as
+    they're still black.
+    """
     if MAC or win is None:
         return win
     now = time.time() if now is None else now
     rect = (win.left, win.top, win.width, win.height)
-    if rect != _bars["rect"] or now - _bars["at"] >= BAR_RECHECK_S:
-        area = _bars_area(*rect)
-        if area != _bars["area"] or rect != _bars["rect"]:
-            if area:
-                print(f"[autocopy] game drawn at {area[2]}x{area[3]} inside "
-                      f"a {rect[2]}x{rect[3]} window (black bars round it)")
-        _bars.update(rect=rect, area=area, at=now)
-    area = _bars["area"]
-    return GameView(win, area) if area else win
+    if rect != _bars["rect"]:
+        _bars.update(rect=rect, bars=None, seen=None, at=float("-inf"))
+    if now - _bars["at"] >= BAR_RECHECK_S:
+        _bars["at"] = now
+        try:
+            if frame is None:
+                with mss.mss() as sct:
+                    frame = np.array(sct.grab({"left": rect[0], "top": rect[1],
+                                               "width": rect[2],
+                                               "height": rect[3]}))[:, :, :3]
+        except Exception:
+            frame = None
+        if frame is not None and frame.size:
+            got = measure_bars(frame)
+            old = _bars["bars"]
+            if got != old and not (got is None and old and _bars_still(frame, old)):
+                if got == _bars["seen"]:
+                    _bars["bars"] = got
+                    if got:
+                        print(f"[autocopy] black bars round the game: "
+                              f"{got[0]}px above and below, {got[1]}px each "
+                              f"side, in a {rect[2]}x{rect[3]} window")
+                    else:
+                        print("[autocopy] no black bars round the game now")
+                _bars["seen"] = got
+            else:
+                _bars["seen"] = old
+    bars = _bars["bars"]
+    if not bars:
+        return win
+    fh, fw = rect[3], rect[2]
+    v, h = bars
+    return GameView(win, (rect[0] + h, rect[1] + v, fw - 2 * h, fh - 2 * v))
 
 
 def shield_rect(win, frame=None):

@@ -19,9 +19,9 @@ DISCORD_URL = "https://discord.gg/9HHgfca4At"
 CHANGELOG = [
     ("1.37.5", "2026-11-24", [
         "Games are now saved by themselves when Pokémon TCG Live runs full "
-        "screen on a screen that isn't 16:9, such as a 3:2 laptop, a 16:10 "
-        "monitor or an ultrawide. The game adds black bars there, and the "
-        "app was looking for the result screen partly inside them.",
+        "screen at a resolution smaller than your screen, or a different "
+        "shape. The game puts black bars round itself then, and the app was "
+        "looking for the result screen partly inside them.",
     ]),
     ("1.37.4", "2026-11-19", [
         "On a computer that's never had Full Bench, the app now starts when "
