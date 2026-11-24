@@ -6,7 +6,7 @@ worth telling a user about. The About tab reads both from here, so there
 is one place to edit.
 """
 
-VERSION = "1.37.4"
+VERSION = "1.37.5"
 
 # Where the "support Full Bench" links point. Ko-fi charges no fee on
 # donations; Buy Me a Coffee takes 5%. Either works -- change the URL.
@@ -17,6 +17,12 @@ DONATE_LABEL = "Support Full Bench on Ko-fi"
 DISCORD_URL = "https://discord.gg/9HHgfca4At"
 
 CHANGELOG = [
+    ("1.37.5", "2026-11-24", [
+        "Games are now saved by themselves when Pokémon TCG Live runs full "
+        "screen on a screen that isn't 16:9, such as a 3:2 laptop, a 16:10 "
+        "monitor or an ultrawide. The game adds black bars there, and the "
+        "app was looking for the result screen partly inside them.",
+    ]),
     ("1.37.4", "2026-11-19", [
         "On a computer that's never had Full Bench, the app now starts when "
         "Windows does and waits by the clock, so every game is saved without "

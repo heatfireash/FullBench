@@ -148,6 +148,88 @@ def game_area(win, frame=None):
     return left, top + round(t * k), w, h - round((t + b) * k)
 
 
+class GameView:
+    """
+    The part of a Windows game window the game actually draws in, standing
+    in for the window everywhere else in this file (grabs, clicks, the
+    fractions the buttons are looked for at).
+
+    The game always draws 16:9. Full screen on a screen of another shape
+    (3:2 laptops, 16:10, ultrawide), it fills the rest with black bars, and
+    every fraction of the whole window then lands in the wrong place: the
+    gold Continue strip ends up half in the bottom bar and the result
+    screen is never seen. So when the window isn't 16:9 and the strips
+    where bars would be are black, the 16:9 middle is used instead.
+    Anything else -- activate(), the title -- goes to the real window.
+    """
+
+    def __init__(self, window, area):
+        self.window = window
+        self.left, self.top, self.width, self.height = area
+
+    def __getattr__(self, name):
+        return getattr(self.window, name)
+
+
+BAR_RECHECK_S = 3.0      # how often bars are looked for again
+BAR_DARK = 16            # brightest a bar pixel can be
+BAR_DARK_SHARE = 0.98    # share of a bar's pixels that must be that dark
+_bars = {"rect": None, "area": None, "at": 0.0}
+
+
+def _grab_box(left, top, width, height):
+    with mss.mss() as sct:
+        img = np.array(sct.grab({"left": int(left), "top": int(top),
+                                 "width": max(1, int(width)),
+                                 "height": max(1, int(height))}))
+    return img[:, :, :3]
+
+
+def _bars_area(left, top, w, h, grab_box=_grab_box):
+    """(left, top, width, height) of the 16:9 middle if the window around
+    it is black bars, else None."""
+    if w <= 0 or h <= 0 or abs(w / h - 16 / 9) < 0.03:
+        return None
+    if w / h > 16 / 9:                      # wider: bars left and right
+        gw, gh = round(h * 16 / 9), h
+    else:                                   # taller: bars top and bottom
+        gw, gh = w, round(w * 9 / 16)
+    gx, gy = (w - gw) // 2, (h - gh) // 2
+    if max(gx / w, gy / h) < 0.02:
+        return None
+    if gy:
+        strips = [(left, top, w, gy), (left, top + gy + gh, w, h - gy - gh)]
+    else:
+        strips = [(left, top, gx, h), (left + gx + gw, top, w - gx - gw, h)]
+    for s in strips:
+        try:
+            img = grab_box(*s)
+        except Exception:
+            return None
+        if img.size == 0 or (img.max(axis=2) < BAR_DARK).mean() < BAR_DARK_SHARE:
+            return None
+    return left + gx, top + gy, gw, gh
+
+
+def game_view(win, now=None):
+    """The window, or on Windows a GameView of the 16:9 part of it when
+    the game has black bars round it. Looked for again every few seconds,
+    and straight away when the window moves or changes size."""
+    if MAC or win is None:
+        return win
+    now = time.time() if now is None else now
+    rect = (win.left, win.top, win.width, win.height)
+    if rect != _bars["rect"] or now - _bars["at"] >= BAR_RECHECK_S:
+        area = _bars_area(*rect)
+        if area != _bars["area"] or rect != _bars["rect"]:
+            if area:
+                print(f"[autocopy] game drawn at {area[2]}x{area[3]} inside "
+                      f"a {rect[2]}x{rect[3]} window (black bars round it)")
+        _bars.update(rect=rect, area=area, at=now)
+    area = _bars["area"]
+    return GameView(win, area) if area else win
+
+
 def shield_rect(win, frame=None):
     """Screen-coordinate rect covering the Continue button. `frame`, a
     picture of the window, lets it allow for full-screen black bars."""
@@ -465,7 +547,9 @@ def _click(win, xy):
     if MAC:
         mac_platform.click(x, y, pid=getattr(win, "pid", None))
         return
-    rect = (win.left, win.top, win.left + win.width, win.top + win.height)
+    # the whole window, bars and all: what the game keeps the pointer in
+    w = getattr(win, "window", win)
+    rect = (w.left, w.top, w.left + w.width, w.top + w.height)
     # Move first, as a real mouse move the game sees, and give it a few
     # frames to notice the pointer is over the button. Pinning first
     # would put the pointer there without the game seeing it arrive.
@@ -625,6 +709,7 @@ last_why = None
 def _shape(win):
     """ "16:9" or "other": the game window's shape, which the picture
     matching depends on."""
+    win = getattr(win, "window", win)        # the window, not the bars' middle
     try:
         return "16:9" if abs(win.width / win.height - 16 / 9) < 0.03 else "other"
     except Exception:
@@ -951,7 +1036,7 @@ def _watch(poll=POLL_S, stop=None, on_status=None, on_shield=None,
     gone_since = None          # when the result screen last vanished
     last_hash = None           # the match already captured
     while stop is None or not stop.is_set():
-        win = find_window()
+        win = game_view(find_window())
         if not win:
             _release()
             time.sleep(2.0)
